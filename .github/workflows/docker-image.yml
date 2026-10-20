@@ -1,0 +1,65 @@
+name: Docker Image CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  acceptance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Validate plugin and Compose files
+        run: |
+          python3 -m json.tool plugin.json >/dev/null
+          python3 -m json.tool data/affected-tls.json >/dev/null
+          python3 -m compileall -q scripts tests
+          bash -n build_docker_compose.sh update-pins.sh scripts/startup.sh scripts/fetch-example-authority.sh
+          SUPERDIR=/tmp/ docker compose -f docker-compose.yml config --quiet
+          SUPERDIR=/tmp/ docker compose -f docker-compose-kvm.yml config --quiet
+      - name: Test forged certificate acceptance
+        run: python3 tests/run_acceptance.py
+      - name: Test SPR sink contract
+        run: python3 -m unittest discover -s tests -p 'test_*.py'
+
+  buildx:
+    needs: acceptance
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    env:
+      SUPERDIR: /tmp/
+    steps:
+      - uses: actions/checkout@v5
+      - name: Load pinned build inputs
+        run: grep -vE '^[[:space:]]*(#|$)' reproducible.env >> "$GITHUB_ENV"
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+        with:
+          name: spr-mitm-tester-builder
+          driver-opts: image=${{ env.BUILDKIT_REF }}
+      - name: Authenticate to GHCR
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build pull request image
+        if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+        run: ./build_docker_compose.sh --set '*.platform=linux/amd64' --load
+      - name: Build and publish main image
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          ./build_docker_compose.sh \
+            --set '*.platform=linux/amd64,linux/arm64' \
+            --set '*.tags=ghcr.io/spr-networks/spr-mitm-tester:latest' \
+            --set "*.tags=ghcr.io/spr-networks/spr-mitm-tester:sha-${GITHUB_SHA}" \
+            --push

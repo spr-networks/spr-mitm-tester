@@ -1,7 +1,10 @@
+# Deterministic context: no host dependencies, build outputs, or private authority.
 .git
-frontend/node_modules
+**/node_modules
 frontend/build
-__pycache__
-*.pyc
+**/__pycache__
+**/*.pyc
+**/*.log
+.DS_Store
 authority.key
 authority.crt
