@@ -40,6 +40,10 @@ In SPR:
 
 The sandboxed plugin UI reads only its own status, topology, and event endpoints. It does not call the SPR PFW, firewall, or device APIs. Installing or starting this plugin does not intercept device traffic by itself. If the proxy stops while forwarding rules remain, selected TCP/443 traffic can fail until routing is disabled.
 
+The container listens for redirected TLS on TCP port `9999` inside its network namespace, and serves its plugin API on a Unix socket. The `8080-8081/tcp` text in `docker ps` is inherited `EXPOSE` metadata from the mitmproxy base image; the plugin does not listen on those ports, and the Compose files publish no host ports.
+
+The plugin's SPR management name is `spr-mitm-tester`, matching its URI and repository name. Installations made from older manifests may still be saved in SPR as `MITM tester`; changing the manifest does not rename an existing SPR configuration entry. After upgrading SPR with the legacy-name management fix, rename that entry to `spr-mitm-tester` in SPR's plugin editor, or remove and reinstall it.
+
 ## Scope and interpretation
 
 - The catalogue includes the six affected TLS intermediate keys under two root chains each. Code signing intermediates are outside this TLS probe.

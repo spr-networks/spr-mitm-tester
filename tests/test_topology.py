@@ -18,6 +18,8 @@ spec.loader.exec_module(plugin_api)
 class SinkContractTest(unittest.TestCase):
     def test_live_sink_matches_network_capability(self):
         plugin = json.loads((ROOT / "plugin.json").read_text())
+        self.assertEqual(plugin["Name"], plugin["URI"])
+        self.assertRegex(plugin["Name"], r"^[a-z0-9-]+$")
         self.assertTrue(plugin["SandboxedUI"])
         self.assertTrue(plugin["HasTopology"])
         self.assertNotIn("InstallTokenPath", plugin)

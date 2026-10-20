@@ -1,5 +1,5 @@
 {
-  "Name": "MITM tester",
+  "Name": "spr-mitm-tester",
   "Runtime": "kvm",
   "Enabled": true,
   "UnixPath": "/state/plugins/spr-mitm-tester/socket.sock",
