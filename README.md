@@ -42,7 +42,7 @@ The sandboxed plugin UI reads only its own status, topology, and event endpoints
 
 The container listens for redirected TLS on TCP port `9999` inside its network namespace, and serves its plugin API on a Unix socket. The `8080-8081/tcp` text in `docker ps` is inherited `EXPOSE` metadata from the mitmproxy base image; the plugin does not listen on those ports, and the Compose files publish no host ports.
 
-The plugin's SPR management name is `spr-mitm-tester`, matching its URI and repository name. Installations made from older manifests may still be saved in SPR as `MITM tester`; changing the manifest does not rename an existing SPR configuration entry. After upgrading SPR with the legacy-name management fix, rename that entry to `spr-mitm-tester` in SPR's plugin editor, or remove and reinstall it.
+The plugin's SPR management name is `spr-mitm-tester`, matching its URI and repository name. Installations made from older manifests may still be saved in SPR as `MITM tester`; changing the manifest does not rename an existing SPR configuration entry. That saved entry needs an administrator to rename it in SPR's configuration before the management API can address it by the new name.
 
 ## Scope and interpretation
 
