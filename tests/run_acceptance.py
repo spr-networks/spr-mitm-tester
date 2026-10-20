@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Run the certificate-acceptance test in an offline, bounded Docker container."""
 
+import os
 from pathlib import Path
 import subprocess
 import tempfile
@@ -16,6 +17,7 @@ KEY_URL = (
 
 
 def main():
+    uid, gid = os.getuid(), os.getgid()
     with tempfile.TemporaryDirectory(prefix=".mitm-tester-test.", dir=PLUGIN.parent) as fixture:
         key_path = Path(fixture) / "authority.key"
         with urlopen(KEY_URL, timeout=20) as response:
@@ -27,8 +29,9 @@ def main():
             "--add-host", "www.whatever.com:127.0.0.1",
             "--read-only", "--cap-drop", "ALL",
             "--security-opt", "no-new-privileges",
+            "--user", f"{uid}:{gid}",
             "--pids-limit", "64", "--memory", "768m", "--cpus", "1",
-            "--tmpfs", "/scratch:rw,nosuid,size=64m,mode=0700",
+            "--tmpfs", f"/scratch:rw,nosuid,size=64m,mode=0700,uid={uid},gid={gid}",
             "--mount", f"type=bind,src={PLUGIN},dst=/plugin,readonly",
             "--mount", f"type=bind,src={fixture},dst=/fixture,readonly",
             "-e", "HOME=/scratch", "-e", "TMPDIR=/scratch",
