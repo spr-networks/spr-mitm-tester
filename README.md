@@ -1,10 +1,18 @@
-# SPR MITM tester sink
+# SPR MITM tester 
+
+This is a tool to test IOT devices for MITM devices.
+
+AI notes below
+
+## Notes
+
 
 This plugin tests selected IoT devices using their **normal destinations**. SPR PFW routes selected TCP/443 flows to a dedicated `mitmtst0` sink. In the container, nftables redirects those connections to mitmproxy's transparent listener. Mitmproxy connects to the original server and presents a leaf certificate for the destination signed by a compromised eMudhra TLS intermediate. The connection is then relayed to the Internet.
 
 The plugin records only client IP, SNI, timestamp, selected intermediate, and TLS handshake outcome. It does not save HTTP requests, responses, or flow files. It challenges the first connection for each client IP and SNI per proxy run; later connections for that pair are passed through unchanged. TCP/443 without SNI is passed through. SPR can separately block UDP/443 for selected devices so clients that support fallback use TCP TLS. Other ports are outside this sink.
 
 For example, when a selected device opens TLS to `www.whatever.com`, the proxy connects to `www.whatever.com` and presents the device with a new `www.whatever.com` certificate signed by the selected affected eMudhra intermediate. A completed client handshake is the observation this audit seeks.
+
 
 ## Provision an affected authority
 
