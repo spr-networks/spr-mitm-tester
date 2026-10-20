@@ -1,0 +1,25 @@
+services:
+  spr-mitm-tester:
+    container_name: spr-mitm-tester
+    image: ghcr.io/spr-networks/spr-mitm-tester:latest
+    build:
+      context: "${BUILDCTX:-.}"
+    cap_add:
+      - NET_ADMIN
+    environment:
+      AUDIT_INTERFACE: eth0
+    sysctls:
+      - net.ipv4.ip_forward=0
+    networks:
+      auditnet:
+    volumes:
+      - "${SUPERDIR}./state/plugins/spr-mitm-tester:/state/plugins/spr-mitm-tester"
+      - "${SUPERDIR}./configs/plugins/spr-mitm-tester:/configs/spr-mitm-tester:ro"
+    tmpfs:
+      - /run/mitm-tester:mode=0700
+
+networks:
+  auditnet:
+    driver_opts:
+      com.docker.network.bridge.name: mitmtst0
+      com.docker.network.driver.mtu: "1400"

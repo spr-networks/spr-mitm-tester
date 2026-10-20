@@ -1,0 +1,17 @@
+{
+  "Name": "MITM tester",
+  "Runtime": "kvm",
+  "Enabled": true,
+  "UnixPath": "/state/plugins/spr-mitm-tester/socket.sock",
+  "URI": "spr-mitm-tester",
+  "HasUI": true,
+  "Icon": "ShieldAlert",
+  "HasTopology": true,
+  "SandboxedUI": false,
+  "NetworkCapabilities": {
+    "Interface": "mitmtst0",
+    "DeviceMAC": "02:53:50:52:4b:17",
+    "Policies": ["wan", "dns"],
+    "Groups": []
+  }
+}

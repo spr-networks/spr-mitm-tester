@@ -1,0 +1,33 @@
+services:
+  spr-mitm-tester:
+    extends:
+      file: docker-compose.yml
+      service: spr-mitm-tester
+    image: ghcr.io/spr-networks/spr-mitm-tester:latest
+    build: !reset null
+    runtime: ${SPR_KRUN_RUNTIME:-spr-krun}
+    sysctls: !reset []
+    annotations:
+      krun.cpus: "${SPR_KRUN_CPUS:-2}"
+      krun.ram_mib: "${SPR_KRUN_RAM_MIB:-192}"
+      krun.tap_name: "kruntap0"
+      krun.net_uplink: "eth0"
+      krun.vsock_path: "/state/plugins/spr-mitm-tester/socket.sock"
+      krun.vsock_port: "4040"
+    environment:
+      SPR_KRUN_PLUGIN_SOCKET: "/run/spr-krun-plugin/spr-mitm-tester.sock"
+      SPR_KRUN_VSOCK_PORT: "4040"
+      AUDIT_INTERFACE: eth0
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    devices:
+      - "/dev/net/tun:/dev/net/tun"
+
+networks:
+  auditnet:
+    driver_opts:
+      com.docker.network.bridge.name: mitmtst0
+      com.docker.network.bridge.inhibit_ipv4: "true"
+      com.docker.network.driver.mtu: "1400"

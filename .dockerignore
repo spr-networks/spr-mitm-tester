@@ -1,0 +1,7 @@
+.git
+frontend/node_modules
+frontend/build
+__pycache__
+*.pyc
+authority.key
+authority.crt
