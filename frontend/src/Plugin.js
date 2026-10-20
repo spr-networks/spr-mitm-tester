@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import {
-  api, Badge, BadgeText, Card, HStack, ListHeader, Page,
+  api, Badge, BadgeText, Button, ButtonText, Card, HStack, ListHeader, Page,
   SectionHeader, Text, VStack
 } from '@spr-networks/plugin-ui'
 
@@ -18,6 +18,7 @@ export default function Plugin() {
   const [status, setStatus] = useState(null)
   const [topology, setTopology] = useState(null)
   const [events, setEvents] = useState([])
+  const [expandedRequest, setExpandedRequest] = useState(null)
   const [error, setError] = useState('')
 
   useEffect(() => {
@@ -45,6 +46,8 @@ export default function Plugin() {
 
   const sink = topology?.Sinks?.find((item) => item.Iface === BRIDGE)
   const ready = Boolean(status?.ready && sink?.Online)
+  const challenges = events.filter((event) => event.result !== 'request')
+  const requests = events.filter((event) => event.result === 'request').reverse().slice(0, 20)
 
   return (
     <Page testID="mitm-tester-page">
@@ -72,14 +75,55 @@ export default function Plugin() {
         <SectionHeader title="Recent TLS challenges" />
         <VStack space="sm">
           <Text>A completed forged-certificate handshake is evidence that this connection accepted the affected chain. A failed handshake is inconclusive.</Text>
-          {events.length === 0 && <Text>No challenges recorded yet.</Text>}
-          {[...events].reverse().slice(0, 50).map((event, index) => (
+          {challenges.length === 0 && <Text>No challenges recorded yet.</Text>}
+          {[...challenges].reverse().slice(0, 50).map((event, index) => (
             <HStack key={`${event.time}-${index}`} space="sm" alignItems="center" justifyContent="space-between">
               <Text>{event.time} · {event.client_ip} · {event.sni}</Text>
               <Badge action={event.result === 'handshake_completed' ? 'error' : 'warning'} variant="outline">
                 <BadgeText>{eventLabel[event.result] || event.result}</BadgeText>
               </Badge>
             </HStack>
+          ))}
+        </VStack>
+      </Card>
+      <Card>
+        <SectionHeader title="Recent requests" count={requests.length} />
+        <VStack space="md">
+          <Text>Requests are shown after the device completes the TLS handshake. Bodies are streamed to the destination; the log keeps the first 8 KiB of each body.</Text>
+          {requests.length === 0 && <Text>No requests captured yet.</Text>}
+          {requests.map((request) => (
+            <VStack key={request.request_id} space="xs">
+              <HStack space="sm" alignItems="center" justifyContent="space-between">
+                <VStack space="xs" flex={1}>
+                  <Text fontWeight="bold" sx={{ '@base': { overflowWrap: 'anywhere' } }}>
+                    {request.method} {request.url}{request.url_truncated ? '…' : ''}
+                  </Text>
+                  <Text size="sm">{request.time} · {request.client_ip} · {request.sni}</Text>
+                </VStack>
+                <Button size="xs" variant="outline" onPress={() => setExpandedRequest(
+                  expandedRequest === request.request_id ? null : request.request_id
+                )}>
+                  <ButtonText>{expandedRequest === request.request_id ? 'Hide details' : 'View details'}</ButtonText>
+                </Button>
+              </HStack>
+              {expandedRequest === request.request_id && (
+                <VStack space="xs">
+                  <Text fontWeight="bold">Headers{request.headers_truncated ? ' (truncated)' : ''}</Text>
+                  {(request.headers || []).map(([name, value], index) => (
+                    <Text key={`${name}-${index}`} size="sm" fontFamily="$mono" selectable sx={{ '@base': { overflowWrap: 'anywhere' } }}>
+                      {name}: {value}
+                    </Text>
+                  ))}
+                  <Text fontWeight="bold">Body · {request.body_bytes || 0} bytes{request.body_truncated ? ' (preview truncated)' : ''}</Text>
+                  {request.body_bytes > 0 && (
+                    <Text size="sm" fontFamily="$mono" selectable sx={{ '@base': { whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' } }}>
+                      {request.body_encoding === 'base64' ? 'Base64: ' : ''}{request.body_preview}
+                    </Text>
+                  )}
+                  {!request.body_bytes && <Text size="sm">No request body.</Text>}
+                </VStack>
+              )}
+            </VStack>
           ))}
         </VStack>
       </Card>

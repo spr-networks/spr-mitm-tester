@@ -1,5 +1,6 @@
-"""One certificate challenge per client IP and SNI; persist only TLS metadata."""
+"""Challenge each client/SNI once and record bounded HTTP request previews."""
 
+import base64
 import json
 import os
 from datetime import datetime, timezone
@@ -8,6 +9,9 @@ from pathlib import Path
 EVENTS = Path(os.environ.get("MITM_TESTER_STATE_DIR", "/state/plugins/spr-mitm-tester")) / "events.jsonl"
 RUN_DIR = Path(os.environ.get("MITM_TESTER_RUN_DIR", "/run/mitm-tester"))
 MAX_BYTES = 2_000_000
+BODY_PREVIEW_BYTES = 8192
+HEADER_CHARS = 8192
+URL_CHARS = 4096
 
 
 class MITMTesterProbe:
@@ -23,14 +27,16 @@ class MITMTesterProbe:
             issuer=self.authority["issued_by"],
         )
         EVENTS.parent.mkdir(parents=True, exist_ok=True)
-        # Keep a bounded local audit trail. Only connection metadata is written.
+        # Requests may contain credentials, so keep the bounded local log private.
         if EVENTS.exists() and EVENTS.stat().st_size > MAX_BYTES:
             with EVENTS.open("rb") as source:
                 source.seek(-MAX_BYTES // 2, os.SEEK_END)
                 source.readline()
                 tail = source.read()
             EVENTS.write_bytes(tail)
-        with EVENTS.open("a", encoding="utf-8") as target:
+        descriptor = os.open(EVENTS, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        os.fchmod(descriptor, 0o600)
+        with os.fdopen(descriptor, "a", encoding="utf-8") as target:
             target.write(json.dumps(event, separators=(",", ":")) + "\n")
 
     def tls_clienthello(self, data):
@@ -65,8 +71,61 @@ class MITMTesterProbe:
             self.emit({**probe, "result": "disconnected_before_result"})
 
     def requestheaders(self, flow):
-        # Stream bodies through; never accumulate them for this audit.
-        flow.request.stream = True
+        capture = {"body_bytes": 0, "preview": bytearray()}
+        flow.metadata["mitm_tester_request"] = capture
+
+        def forward_and_capture(chunk):
+            if chunk:
+                capture["body_bytes"] += len(chunk)
+                remaining = BODY_PREVIEW_BYTES - len(capture["preview"])
+                if remaining:
+                    capture["preview"].extend(chunk[:remaining])
+            return chunk
+
+        flow.request.stream = forward_and_capture
+
+    def request(self, flow):
+        capture = flow.metadata.pop("mitm_tester_request", {"body_bytes": 0, "preview": bytearray()})
+        headers = []
+        remaining = HEADER_CHARS
+        headers_truncated = False
+        for name, value in flow.request.headers.items(multi=True):
+            if remaining <= 0:
+                headers_truncated = True
+                break
+            name = name[:min(256, remaining)]
+            remaining -= len(name)
+            clipped_value = value[:remaining]
+            remaining -= len(clipped_value)
+            headers.append([name, clipped_value])
+            if len(clipped_value) != len(value):
+                headers_truncated = True
+                break
+
+        preview = bytes(capture["preview"])
+        try:
+            body_preview = preview.decode("utf-8")
+            body_encoding = "utf-8"
+        except UnicodeDecodeError:
+            body_preview = base64.b64encode(preview).decode("ascii")
+            body_encoding = "base64"
+        url = flow.request.pretty_url
+        client = flow.client_conn
+        self.emit({
+            "result": "request",
+            "request_id": flow.id,
+            "client_ip": client.peername[0] if client.peername else "unknown",
+            "sni": client.sni or "",
+            "method": flow.request.method,
+            "url": url[:URL_CHARS],
+            "url_truncated": len(url) > URL_CHARS,
+            "headers": headers,
+            "headers_truncated": headers_truncated,
+            "body_bytes": capture["body_bytes"],
+            "body_preview": body_preview,
+            "body_encoding": body_encoding,
+            "body_truncated": capture["body_bytes"] > len(preview),
+        })
 
     def responseheaders(self, flow):
         flow.response.stream = True

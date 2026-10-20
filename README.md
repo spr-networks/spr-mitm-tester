@@ -9,7 +9,7 @@ AI notes below
 
 This plugin tests selected IoT devices using their **normal destinations**. SPR PFW routes selected TCP/443 flows to a dedicated `mitmtst0` sink. In the container, nftables redirects those connections to mitmproxy's transparent listener. Mitmproxy connects to the original server and presents a leaf certificate for the destination signed by a compromised eMudhra TLS intermediate. The connection is then relayed to the Internet.
 
-The plugin records only client IP, SNI, timestamp, selected intermediate, and TLS handshake outcome. It does not save HTTP requests, responses, or flow files. It challenges the first connection for each client IP and SNI per proxy run; later connections for that pair are passed through unchanged. TCP/443 without SNI is passed through. SPR can separately block UDP/443 for selected devices so clients that support fallback use TCP TLS. Other ports are outside this sink.
+The plugin records client IP, SNI, timestamp, selected intermediate, and TLS handshake outcome. After a successful handshake it also records HTTP request method, URL, headers, total body size, and the first 8 KiB of the body. Binary previews are base64 encoded; headers and URLs have explicit size limits. It does not save responses or flow files. Request data can contain credentials, so the local event log is mode `0600` and the UI exposes it only through the plugin's sandboxed API. It challenges the first connection for each client IP and SNI per proxy run; later connections for that pair are passed through unchanged. TCP/443 without SNI is passed through. SPR can separately block UDP/443 for selected devices so clients that support fallback use TCP TLS. Other ports are outside this sink.
 
 For example, when a selected device opens TLS to `www.whatever.com`, the proxy connects to `www.whatever.com` and presents the device with a new `www.whatever.com` certificate signed by the selected affected eMudhra intermediate. A completed client handshake is the observation this audit seeks.
 
@@ -35,7 +35,7 @@ In SPR:
 1. Confirm the selected intermediate and sink IP in the plugin UI.
 2. Use SPR's Devices and PFW controls to select the devices under test and route their TCP/443 traffic to the **MITM tester** sink, preserving the original destination.
 3. If those devices use QUIC, block UDP/443 for them in SPR so they can fall back to TCP TLS.
-4. Review recent TLS challenges in the plugin UI. **TLS handshake completed** means the client completed a handshake with the forged certificate. Failed or disconnected handshakes are inconclusive; they can also reflect pinning, revocation, protocol incompatibility, upstream failure, or application behavior.
+4. Review recent TLS challenges and expand captured requests in the plugin UI. **TLS handshake completed** means the client completed a handshake with the forged certificate. Failed or disconnected handshakes are inconclusive; they can also reflect pinning, revocation, protocol incompatibility, upstream failure, or application behavior.
 5. Remove the SPR forwarding and UDP block rules when finished.
 
 The sandboxed plugin UI reads only its own status, topology, and event endpoints. It does not call the SPR PFW, firewall, or device APIs. Installing or starting this plugin does not intercept device traffic by itself. If the proxy stops while forwarding rules remain, selected TCP/443 traffic can fail until routing is disabled.
@@ -55,7 +55,7 @@ The transparent certificate generation and pass-through behavior follow [mitmpro
 
 With Docker available, run `python3 tests/run_acceptance.py` from this directory. The runner downloads the reporter's pinned public example key into a temporary directory, runs four isolated loopback tests in the pinned mitmproxy image, and removes the key when finished. The test container has no external network access. It uses a synthetic HTTPS server for `www.whatever.com` and a client that trusts either the affected root or the affected intermediate, testing both the emSign and AAA certificate chains.
 
-Each test verifies that the client accepts the forged hostname certificate, checks its SAN and signature against the affected intermediate, retrieves the synthetic upstream response through the proxy, and finds a `handshake_completed` event. This exercises certificate generation and client acceptance in regular proxy mode; the SPR PFW and nftables transparent routing path requires a separate device or network test. The synthetic upstream uses a self-signed certificate, so this test enables mitmproxy's `ssl_insecure` option only in the isolated test process; the plugin's production startup leaves upstream verification enabled.
+Each test verifies that the client accepts the forged hostname certificate, checks its SAN and signature against the affected intermediate, sends a POST body through to the synthetic upstream, and finds both `handshake_completed` and bounded request data in the event log. This exercises certificate generation and client acceptance in regular proxy mode; the SPR PFW and nftables transparent routing path requires a separate device or network test. The synthetic upstream uses a self-signed certificate, so this test enables mitmproxy's `ssl_insecure` option only in the isolated test process; the plugin's production startup leaves upstream verification enabled.
 
 ## Reproducible image and CI
 

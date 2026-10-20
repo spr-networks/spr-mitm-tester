@@ -44,7 +44,8 @@ def main():
                 print(f"Testing {issuer} chain with client trusting {trust}", flush=True)
                 command = (
                     common[:image_index]
-                    + ["-e", f"TEST_ISSUER={issuer}", "-e", f"TEST_TRUST={trust}"]
+                    + ["-e", f"TEST_ISSUER={issuer}", "-e", f"TEST_TRUST={trust}",
+                       "-e", f"TEST_BINARY={int(issuer == 'aaa' and trust == 'intermediate')}"]
                     + common[image_index:]
                 )
                 subprocess.run(command, check=True)

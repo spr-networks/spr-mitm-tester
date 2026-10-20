@@ -1,5 +1,6 @@
 """Offline loopback test: a root-trusting client accepts a forged hostname leaf."""
 
+import base64
 import json
 import os
 import socket
@@ -22,11 +23,16 @@ HOSTNAME = "www.whatever.com"
 PLUGIN = Path("/plugin")
 SCRATCH = Path("/scratch")
 KEY = Path("/fixture/authority.key")
+REQUEST_BODY = (
+    b"\xff" + b"x" * 10000 if os.environ.get("TEST_BINARY") == "1"
+    else json.dumps({"device": "sensor-7", "payload": "x" * 10000}).encode()
+)
 
 
 class UpstreamHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        body = b"upstream-ok"
+    def do_POST(self):
+        received = self.rfile.read(int(self.headers["Content-Length"]))
+        body = b"upstream-ok:" + received
         self.send_response(200)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
@@ -96,11 +102,16 @@ def connect_through_proxy(proxy_port, upstream_port, trust_file, trust_intermedi
         context.verify_flags |= ssl.VERIFY_X509_PARTIAL_CHAIN
     with context.wrap_socket(raw, server_hostname=HOSTNAME) as client:
         leaf = x509.load_der_x509_certificate(client.getpeercert(binary_form=True))
-        client.sendall(f"GET / HTTP/1.1\r\nHost: {HOSTNAME}\r\nConnection: close\r\n\r\n".encode())
+        client.sendall(
+            f"POST /telemetry?unit=7 HTTP/1.1\r\nHost: {HOSTNAME}\r\n"
+            f"X-Device: sensor-7\r\nContent-Type: application/octet-stream\r\n"
+            f"Content-Length: {len(REQUEST_BODY)}\r\nConnection: close\r\n\r\n".encode()
+            + REQUEST_BODY
+        )
         response = b""
         while chunk := client.recv(4096):
             response += chunk
-    assert b"upstream-ok" in response, response[-500:]
+    assert b"upstream-ok:" + REQUEST_BODY in response, response[-500:]
     return leaf
 
 
@@ -159,17 +170,34 @@ def main():
                 deadline = time.monotonic() + 5
                 while time.monotonic() < deadline:
                     events_file = SCRATCH / "events.jsonl"
-                    if events_file.exists() and any(
-                        (event := json.loads(line)).get("result") == "handshake_completed"
-                        and event.get("sni") == HOSTNAME
-                        and event.get("client_ip") == "127.0.0.1"
-                        and event.get("authority") == "EM OV TLS CA - G3C"
-                        for line in events_file.read_text().splitlines()
-                    ):
-                        break
+                    if events_file.exists():
+                        events = [json.loads(line) for line in events_file.read_text().splitlines()]
+                        completed = any(
+                            event.get("result") == "handshake_completed"
+                            and event.get("sni") == HOSTNAME
+                            and event.get("client_ip") == "127.0.0.1"
+                            and event.get("authority") == "EM OV TLS CA - G3C"
+                            for event in events
+                        )
+                        request = next((event for event in events if event.get("result") == "request"), None)
+                        if completed and request:
+                            break
                     time.sleep(0.1)
                 else:
-                    raise AssertionError("no completed handshake recorded")
+                    raise AssertionError("no completed handshake and request recorded")
+                assert request["method"] == "POST", request
+                assert request["url"].endswith("/telemetry?unit=7"), request
+                assert ["x-device", "sensor-7"] in [[name.lower(), value] for name, value in request["headers"]]
+                assert request["body_bytes"] == len(REQUEST_BODY), request
+                expected_encoding = "base64" if os.environ.get("TEST_BINARY") == "1" else "utf-8"
+                expected_preview = (
+                    base64.b64encode(REQUEST_BODY[:8192]).decode() if expected_encoding == "base64"
+                    else REQUEST_BODY[:8192].decode()
+                )
+                assert request["body_preview"] == expected_preview, request
+                assert request["body_encoding"] == expected_encoding, request
+                assert request["body_truncated"] is True, request
+                assert (events_file.stat().st_mode & 0o777) == 0o600
                 print(f"PASS: {HOSTNAME} leaf signed by {intermediate.subject.rfc4514_string()} "
                       f"({issuer}, client trusts {trust})")
             finally:
