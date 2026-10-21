@@ -38,6 +38,7 @@ jobs:
     permissions:
       contents: read
       packages: write
+      id-token: write
     env:
       SUPERDIR: /tmp/
     steps:
@@ -67,3 +68,62 @@ jobs:
             --set '*.tags=ghcr.io/spr-networks/spr-mitm-tester:latest' \
             --set "*.tags=ghcr.io/spr-networks/spr-mitm-tester:sha-${GITHUB_SHA}" \
             --push
+      - name: Resolve published image digest
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        id: digest
+        run: |
+          digest=$(docker buildx imagetools inspect \
+            ghcr.io/spr-networks/spr-mitm-tester:latest \
+            --format '{{.Manifest.Digest}}')
+          test "${digest#sha256:}" != "$digest"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+      - name: Install Cosign
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: sigstore/cosign-installer@v3.6.0
+      - name: Generate SLSA provenance predicate
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          cat > /tmp/predicate.json <<EOF
+          {
+            "buildDefinition": {
+              "buildType": "https://actions.github.io/buildtypes/workflow/v1",
+              "externalParameters": {
+                "workflow": {
+                  "ref": "${{ github.ref }}",
+                  "repository": "${{ github.server_url }}/${{ github.repository }}",
+                  "path": ".github/workflows/docker-image.yml"
+                }
+              },
+              "internalParameters": {
+                "github": {
+                  "event_name": "${{ github.event_name }}",
+                  "repository_id": "${{ github.repository_id }}",
+                  "repository_owner_id": "${{ github.repository_owner_id }}"
+                }
+              },
+              "resolvedDependencies": [{
+                "uri": "git+${{ github.server_url }}/${{ github.repository }}@${{ github.ref }}",
+                "digest": { "gitCommit": "${{ github.sha }}" }
+              }]
+            },
+            "runDetails": {
+              "builder": {
+                "id": "${{ github.server_url }}/${{ github.repository }}/.github/workflows/docker-image.yml@${{ github.ref }}"
+              },
+              "metadata": {
+                "invocationId": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/attempts/${{ github.run_attempt }}"
+              }
+            }
+          }
+          EOF
+      - name: Attest and verify published image
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          IMAGE: ghcr.io/spr-networks/spr-mitm-tester@${{ steps.digest.outputs.digest }}
+        run: |
+          cosign attest --yes --type slsaprovenance1 \
+            --predicate /tmp/predicate.json "$IMAGE"
+          cosign verify-attestation --type slsaprovenance1 \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            --certificate-identity-regexp '^https://github\.com/spr-networks/spr-mitm-tester/\.github/workflows/docker-image\.yml@' \
+            "$IMAGE" >/dev/null
