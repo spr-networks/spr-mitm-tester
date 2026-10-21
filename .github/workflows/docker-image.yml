@@ -32,8 +32,45 @@ jobs:
       - name: Test SPR sink contract
         run: python3 -m unittest discover -s tests -p 'test_*.py'
 
-  buildx:
+  version:
     needs: acceptance
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      release_version: ${{ steps.release.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: '0'
+      - name: Bump version and push tag
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: anothrNick/github-tag-action@38e273cbdda80759cc0232a36f559999f4e47d29
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          WITH_V: true
+          INITIAL_VERSION: 0.0.0
+          DEFAULT_BUMP: none
+          BRANCH_HISTORY: last
+      - name: Select image version
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=latest
+          if [[ "${{ github.event_name }}" == push && "${{ github.ref }}" == refs/heads/main ]]; then
+            git fetch --tags origin
+            tag="$(git describe --tags --abbrev=0 --match 'v[0-9]*')"
+            version="${tag#v}"
+            if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "Invalid release tag: $tag" >&2
+              exit 1
+            fi
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  buildx:
+    needs: version
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -41,6 +78,7 @@ jobs:
       id-token: write
     env:
       SUPERDIR: /tmp/
+      RELEASE_VERSION: ${{ needs.version.outputs.release_version }}
     steps:
       - uses: actions/checkout@v5
       - name: Load pinned build inputs
@@ -69,7 +107,9 @@ jobs:
           ./build_docker_compose.sh \
             --set '*.platform=linux/amd64,linux/arm64' \
             --set '*.tags=ghcr.io/spr-networks/spr-mitm-tester:latest' \
+            --set "*.tags=ghcr.io/spr-networks/spr-mitm-tester:${RELEASE_VERSION}" \
             --set "*.tags=ghcr.io/spr-networks/spr-mitm-tester:sha-${GITHUB_SHA}" \
+            --set "*.labels.org.supernetworks.version=${RELEASE_VERSION}" \
             --push
       - name: Verify clean install starts without authority config
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'

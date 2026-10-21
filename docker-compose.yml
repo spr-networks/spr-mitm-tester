@@ -1,9 +1,15 @@
+x-labels:
+  &default-labels
+  org.supernetworks.ci: "true"
+  org.supernetworks.version: ${RELEASE_VERSION:-latest}
+
 services:
   spr-mitm-tester:
     container_name: spr-mitm-tester
     image: ghcr.io/spr-networks/spr-mitm-tester:latest
     build:
       context: "${BUILDCTX:-.}"
+      labels: *default-labels
     cap_add:
       - NET_ADMIN
     environment:
