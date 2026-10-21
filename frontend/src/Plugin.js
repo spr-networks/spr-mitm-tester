@@ -64,7 +64,7 @@ export default function Plugin() {
           <Text>Bridge: {BRIDGE} · Sink IP: {sink?.IP || 'not detected'}</Text>
           <Text>Authority: {status?.authority
             ? `${status.authority.name} / ${status.authority.issued_by}`
-            : 'No validated authority installed'}</Text>
+            : 'No validated authority available; check container logs'}</Text>
           <Text>In SPR, create a forwarding rule for the devices you want to test. Select the MITM tester sink as the destination and limit the rule to TCP port 443 while preserving the original destination.</Text>
           <Text>For clients that prefer QUIC, add a separate UDP/443 block for those devices in SPR so they can fall back to TCP TLS.</Text>
           <Text>The plugin advertises the sink and records TLS results. Device selection and forwarding rules are managed in SPR.</Text>

@@ -14,21 +14,21 @@ The plugin records client IP, SNI, timestamp, selected intermediate, and TLS han
 For example, when a selected device opens TLS to `www.whatever.com`, the proxy connects to `www.whatever.com` and presents the device with a new `www.whatever.com` certificate signed by the selected affected eMudhra intermediate. A completed client handshake is the observation this audit seeks.
 
 
-## Provision an affected authority
+## Affected authority
 
-The private key is deliberately excluded from this source tree. Supply `authority.crt` and `authority.key` in the SPR config directory for this plugin. Startup validates that the certificate fingerprint matches one of the 12 TLS intermediates in [the published incident list](https://emudhra.we-have-a-problem.com/impacted-intermediates.json), that the key matches, and that the certificate can sign leaves. Only one certificate chain is active per run.
+A clean install automatically uses the [reporter's public `EM OV TLS CA - G3C` example](https://gist.github.com/Fluepke/9a103c7f990c3cc2fb5002f7476f2f48) under the emSign root. The image build downloads the exact published key with a pinned SHA-256 checksum and includes it with the matching public certificate. No fetch or configuration step is needed on the router. This key is already publicly disclosed; the image does not contain any administrator-supplied key. Startup still validates the certificate against the [published incident list](https://emudhra.we-have-a-problem.com/impacted-intermediates.json), checks that the key matches, and verifies that the certificate can sign leaves. Only one certificate chain is active per run.
 
-For the [reporter's public `EM OV TLS CA - G3C` example](https://gist.github.com/Fluepke/9a103c7f990c3cc2fb5002f7476f2f48), from the plugin source directory run:
+To override the bundled example, supply `authority.crt` and `authority.key` together in `configs/plugins/spr-mitm-tester`. For example, to use the AAA cross-sign with the same public key, run this optional helper from the plugin source directory:
 
 ```sh
-./scripts/fetch-example-authority.sh /path/to/super/configs/plugins/spr-mitm-tester emsign
+./scripts/fetch-example-authority.sh /path/to/super/configs/plugins/spr-mitm-tester aaa
 ```
 
-The script downloads the gist's pinned key, pairs it with the bundled public certificate, and checks the certificate fingerprint and key pair before renaming them into place. Container startup checks the installed pair against the full incident catalogue. Pass `aaa` instead of `emsign` to use the `AAA Certificate Services` cross-sign with the same key, then restart the plugin. To test another affected intermediate, supply its matching certificate and key and restart. A successful result for one affected chain establishes exposure; failure for one chain does not clear the other chains.
+The helper checks the certificate fingerprint and key pair before installing both files. Restart the plugin after changing the override. To test another affected intermediate, supply its matching certificate and key and restart. If either override file exists but validation fails, startup reports the error and leaves interception disabled rather than silently using the bundled example. A successful result for one affected chain establishes exposure; failure for one chain does not clear the other chains.
 
 ## Run in SPR
 
-Install the plugin source as a dedicated SPR plugin and start it after provisioning the authority, or restart it after adding the authority files. Its UI reports **Sink ready** only after authority validation and after mitmproxy's listener is reachable. The `NetworkCapabilities` declaration asks SPR to apply the plugin's WAN/DNS firewall access for `mitmtst0` automatically. Its `/topology` response advertises a live `Sinks` entry with the bridge, IP, and readiness, following the same SPR forwarding destination contract as the mitmproxy and tunnel plugins. SPR PLUS/PFW is required for transparent routing.
+Install the plugin source as a dedicated SPR plugin. Its UI reports **Sink ready** after the bundled authority validates and mitmproxy's listener is reachable. The `NetworkCapabilities` declaration asks SPR to apply the plugin's WAN/DNS firewall access for `mitmtst0` automatically. Its `/topology` response advertises a live `Sinks` entry with the bridge, IP, and readiness, following the same SPR forwarding destination contract as the mitmproxy and tunnel plugins. SPR PLUS/PFW is required for transparent routing.
 
 In SPR:
 
@@ -63,6 +63,6 @@ Each test verifies that the client accepts the forged hostname certificate, chec
 
 ## Reproducible image and CI
 
-`reproducible.env` pins the mitmproxy, Node, BuildKit, Dockerfile syntax, and SPR krun helper images by digest. The final image installs its OS packages from a pinned Debian snapshot. The frontend uses the committed Yarn lockfile, including a resolved commit for `spr-plugin-ui`. `build_docker_compose.sh` passes the pins to Buildx and normalizes image timestamps with `SOURCE_DATE_EPOCH=0` and `rewrite-timestamp=true`.
+`reproducible.env` pins the mitmproxy, Node, BuildKit, Dockerfile syntax, and SPR krun helper images by digest. The public example authority key is pinned by SHA-256 in the Dockerfile. The final image installs its OS packages from a pinned Debian snapshot. The frontend uses the committed Yarn lockfile, including a resolved commit for `spr-plugin-ui`. `build_docker_compose.sh` passes the pins to Buildx and normalizes image timestamps with `SOURCE_DATE_EPOCH=0` and `rewrite-timestamp=true`.
 
-Run `./build_docker_compose.sh --load` for a local build. Run `./update-pins.sh` only when deliberately updating dependencies, and review the resulting diff. GitHub Actions validates the manifests, runs the four certificate acceptance cases, builds pull requests, and builds and publishes `linux/amd64` and `linux/arm64` images on `main` to `ghcr.io/spr-networks/spr-mitm-tester` with `latest` and commit SHA tags. The release job attaches and verifies a keyless Sigstore SLSA provenance attestation for the published digest, as required by SPR's plugin updater. The published image contains public certificates and code; the affected private key is mounted from the SPR config directory at runtime.
+Run `./build_docker_compose.sh --load` for a local build. Run `./update-pins.sh` only when deliberately updating dependencies, and review the resulting diff. GitHub Actions validates the manifests, runs the four certificate acceptance cases, builds pull requests, and builds and publishes `linux/amd64` and `linux/arm64` images on `main` to `ghcr.io/spr-networks/spr-mitm-tester` with `latest` and commit SHA tags. The release job attaches and verifies a keyless Sigstore SLSA provenance attestation for the published digest, as required by SPR's plugin updater. The published image includes the pinned, publicly disclosed example key; any administrator-supplied override remains in the SPR config directory.

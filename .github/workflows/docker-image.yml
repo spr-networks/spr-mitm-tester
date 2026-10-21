@@ -68,6 +68,9 @@ jobs:
             --set '*.tags=ghcr.io/spr-networks/spr-mitm-tester:latest' \
             --set "*.tags=ghcr.io/spr-networks/spr-mitm-tester:sha-${GITHUB_SHA}" \
             --push
+      - name: Verify clean install starts without authority config
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: python3 tests/smoke_clean_start.py "ghcr.io/spr-networks/spr-mitm-tester:sha-${GITHUB_SHA}"
       - name: Resolve published image digest
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         id: digest

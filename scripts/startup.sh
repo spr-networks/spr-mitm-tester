@@ -11,9 +11,17 @@ python3 /scripts/api.py &
 api_pid=$!
 trap 'kill "$api_pid" 2>/dev/null || true' EXIT INT TERM
 
+authority_cert=/configs/spr-mitm-tester/authority.crt
+authority_key=/configs/spr-mitm-tester/authority.key
+if [ ! -e "$authority_cert" ] && [ ! -e "$authority_key" ]; then
+  authority_cert=/scripts/example-authority.crt
+  authority_key=/scripts/example-authority.key
+  echo "Using the pinned public eMudhra G3C example authority" >&2
+fi
+
 if ! python3 /scripts/prepare_authority.py \
-  --cert /configs/spr-mitm-tester/authority.crt \
-  --key /configs/spr-mitm-tester/authority.key \
+  --cert "$authority_cert" \
+  --key "$authority_key" \
   --output /run/mitm-tester; then
   echo "No validated eMudhra TLS authority. Plugin API remains available; interception is disabled." >&2
   wait "$api_pid"
