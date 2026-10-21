@@ -31,9 +31,9 @@ nft -a list chain inet filter DROP_MAC_SPOOF
 
 Insert places the rule before the map lookup. Confirm that the first SYN-ACK is accepted, then remove the test rule by its listed handle with `nft delete rule inet filter DROP_MAC_SPOOF handle HANDLE`. This rule is not tied to PFW's selected flows and is not a durable authorization model. The `0.0.0.0` test element can be deleted with `nft 'delete element inet filter ethernet_filter { 0.0.0.0 . "mitmtst0" . 02:53:50:52:4b:17 }'`.
 
-### Proposed SUPER work
+### SUPER dev return-path rule
 
-Add an explicit transparent-sink capability or equivalent host-owned policy. On a packet returning from the declared sink interface, permit the remote-IP source only when the packet belongs to a connection that SPR actually routed to that sink, and when the ingress MAC matches the declared guest. One possible design is to mark the selected connection at the PFW routing decision and match that mark plus conntrack reply direction/state before the ordinary MAC-spoof check. Validate the exact conntrack behavior for the first SYN-ACK in an integration test. Unselected flows, unsolicited packets, wrong-MAC packets, and other plugin interfaces must still hit the existing anti-spoof rule. Remove the scoped allowance when the plugin or route is removed.
+SUPER dev adds `NetworkCapabilities.TransparentSink` and registers the declared interface in `transparent_sink_interfaces`. In `DROP_MAC_SPOOF`, its new rules require that interface, an authorized guest MAC, conntrack reply direction and established state, and a live matching PFW `site_forward` or `site_forward_tcp_port` entry before allowing the remote-IP source. The tester declares `TransparentSink: true` in `plugin.json`. Verify the first SYN-ACK and cleanup on plugin removal in an integration test. Unselected flows, unsolicited packets, wrong-MAC packets, and other plugin interfaces must still hit the ordinary anti-spoof rule.
 
 Relevant SUPER code: `base/scripts/nft_rules.sh` (`FORWARD`, `DROP_MAC_SPOOF`, `ethernet_filter`, `site_forward*`), `api/code/plugins.go` (`ensurePluginDeviceEthernetRule`), and the PFW rule writer in `api/code`.
 

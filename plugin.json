@@ -11,6 +11,7 @@
   "NetworkCapabilities": {
     "Interface": "mitmtst0",
     "DeviceMAC": "02:53:50:52:4b:17",
+    "TransparentSink": true,
     "Policies": ["wan", "dns"],
     "Groups": []
   }

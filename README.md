@@ -28,7 +28,7 @@ The helper checks the certificate fingerprint and key pair before installing bot
 
 ## Run in SPR
 
-Install the plugin source as a dedicated SPR plugin. Its UI reports **Sink ready** after the bundled authority validates and mitmproxy's listener is reachable. The `NetworkCapabilities` declaration asks SPR to apply the plugin's WAN/DNS firewall access for `mitmtst0` automatically. Its `/topology` response advertises a live `Sinks` entry with the bridge, IP, and readiness, following the same SPR forwarding destination contract as the mitmproxy and tunnel plugins. SPR PLUS/PFW is required for transparent routing.
+Install the plugin source as a dedicated SPR plugin. Its UI reports **Sink ready** after the bundled authority validates and mitmproxy's listener is reachable. The `NetworkCapabilities` declaration asks SPR to apply the plugin's WAN/DNS firewall access for `mitmtst0` automatically. On SUPER dev, `TransparentSink: true` also enables the PFW-scoped return path for replies whose source is the original remote server. Its `/topology` response advertises a live `Sinks` entry with the bridge, IP, and readiness, following the same SPR forwarding destination contract as the mitmproxy and tunnel plugins. SPR PLUS/PFW is required for transparent routing.
 
 In SPR:
 
