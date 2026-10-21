@@ -42,6 +42,10 @@ The sandboxed plugin UI reads only its own status, topology, and event endpoints
 
 The container listens for redirected TLS on TCP port `9999` inside its network namespace, and serves its plugin API on a Unix socket. The `8080-8081/tcp` text in `docker ps` is inherited `EXPOSE` metadata from the mitmproxy base image; the plugin does not listen on those ports, and the Compose files publish no host ports.
 
+The pinned mitmproxy base image predates the Let’s Encrypt Root YR chain used by some destinations. The image includes the pinned [Root YR cross-sign by ISRG Root X1](https://letsencrypt.org/certificates/) alongside its existing system CA bundle for upstream verification. This preserves TLS verification while allowing those destinations to relay successfully; other upstream verification failures remain proxy errors.
+
+At startup the plugin copies its probe addon into `/run/mitm-tester` before launching mitmproxy. The reproducible build normalizes image file timestamps to epoch 0, which mitmproxy's script watcher does not load; the runtime copy gives it a current timestamp so challenge and request events are recorded.
+
 The plugin's SPR management name is `spr-mitm-tester`, matching its URI and repository name. Installations made from older manifests may still be saved in SPR as `MITM tester`; changing the manifest does not rename an existing SPR configuration entry. That saved entry needs an administrator to rename it in SPR's configuration before the management API can address it by the new name.
 
 ## Scope and interpretation
@@ -61,8 +65,11 @@ With Docker available, run `python3 tests/run_acceptance.py` from this directory
 
 Each test verifies that the client accepts the forged hostname certificate, checks its SAN and signature against the affected intermediate, sends a POST body through to the synthetic upstream, and finds both `handshake_completed` and bounded request data in the event log. This exercises certificate generation and client acceptance in regular proxy mode; the SPR PFW and nftables transparent routing path requires a separate device or network test. The synthetic upstream uses a self-signed certificate, so this test enables mitmproxy's `ssl_insecure` option only in the isolated test process; the plugin's production startup leaves upstream verification enabled.
 
+After building an image, run `python3 tests/run_packaged_smoke.py ghcr.io/spr-networks/spr-mitm-tester:latest` to exercise the bundled authority and probe addon from the reproducible image. CI runs this after building pull requests and after publishing a main image. It catches packaging failures such as an addon file whose normalized timestamp prevents mitmproxy from loading it.
+
 ## Reproducible image and CI
 
 `reproducible.env` pins the mitmproxy, Node, BuildKit, Dockerfile syntax, and SPR krun helper images by digest. The public example authority key is pinned by SHA-256 in the Dockerfile. The final image installs its OS packages from a pinned Debian snapshot. The frontend uses the committed Yarn lockfile, including a resolved commit for `spr-plugin-ui`. `build_docker_compose.sh` passes the pins to Buildx and normalizes image timestamps with `SOURCE_DATE_EPOCH=0` and `rewrite-timestamp=true`.
+The upstream Root YR cross-sign is committed at `data/upstream/root-yr-by-x1.pem` (file SHA-256 `b3858d7a4d598b4ab6ed2892a1b8c0ee035154876dd40a082a3b05387eea11a4`).
 
 Run `./build_docker_compose.sh --load` for a local build. Run `./update-pins.sh` only when deliberately updating dependencies, and review the resulting diff. GitHub Actions validates the manifests, runs the four certificate acceptance cases, builds pull requests, and builds and publishes `linux/amd64` and `linux/arm64` images on `main` to `ghcr.io/spr-networks/spr-mitm-tester` with `latest` and commit SHA tags. The release job attaches and verifies a keyless Sigstore SLSA provenance attestation for the published digest, as required by SPR's plugin updater. The published image includes the pinned, publicly disclosed example key; any administrator-supplied override remains in the SPR config directory.

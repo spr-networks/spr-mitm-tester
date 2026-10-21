@@ -3,6 +3,7 @@
 import base64
 import json
 import os
+import shutil
 import socket
 import ssl
 import subprocess
@@ -118,22 +119,32 @@ def connect_through_proxy(proxy_port, upstream_port, trust_file, trust_intermedi
 def main():
     SCRATCH.mkdir(exist_ok=True)
     assert any(item[4][0] == "127.0.0.1" for item in socket.getaddrinfo(HOSTNAME, None))
+    packaged = os.environ.get("TEST_PACKAGED") == "1"
     issuer = os.environ.get("TEST_ISSUER", "emsign")
     assert issuer in ("emsign", "aaa")
     trust = os.environ.get("TEST_TRUST", "root")
     assert trust in ("root", "intermediate")
-    cert_file = PLUGIN / "data" / "certs" / f"em-ov-tls-ca-g3c-{issuer}.pem"
-    root_file = PLUGIN / "data" / "roots" / (
-        "emsign-root-tls-g3.pem" if issuer == "emsign" else "aaa-certificate-services.pem"
-    )
+    if packaged:
+        assert issuer == "emsign", "the packaged image includes only the emSign example"
+        scripts_dir = Path("/scripts")
+        cert_file = scripts_dir / "example-authority.crt"
+        root_file = scripts_dir / "roots" / "emsign-root-tls-g3.pem"
+        key_file = scripts_dir / "example-authority.key"
+    else:
+        scripts_dir = PLUGIN / "scripts"
+        cert_file = PLUGIN / "data" / "certs" / f"em-ov-tls-ca-g3c-{issuer}.pem"
+        root_file = PLUGIN / "data" / "roots" / (
+            "emsign-root-tls-g3.pem" if issuer == "emsign" else "aaa-certificate-services.pem"
+        )
+        key_file = KEY
     intermediate = x509.load_pem_x509_certificate(cert_file.read_bytes())
     run_dir = SCRATCH / "mitm"
     run_dir.mkdir()
     subprocess.run(
-        [sys.executable, str(PLUGIN / "scripts" / "prepare_authority.py"),
-         "--cert", str(cert_file), "--key", str(KEY),
-         "--catalogue", str(PLUGIN / "data" / "affected-tls.json"),
-         "--roots-dir", str(PLUGIN / "data" / "roots"),
+        [sys.executable, str(scripts_dir / "prepare_authority.py"),
+         "--cert", str(cert_file), "--key", str(key_file),
+         "--catalogue", str(scripts_dir / "affected-tls.json") if packaged else str(PLUGIN / "data" / "affected-tls.json"),
+         "--roots-dir", str(scripts_dir / "roots") if packaged else str(PLUGIN / "data" / "roots"),
          "--output", str(run_dir)],
         check=True,
     )
@@ -146,6 +157,10 @@ def main():
     server_thread = threading.Thread(target=server.serve_forever, daemon=True)
     server_thread.start()
     proxy_port = free_port()
+    probe_script = scripts_dir / "probe.py"
+    if packaged:
+        probe_script = run_dir / "probe.py"
+        shutil.copyfile(scripts_dir / "probe.py", probe_script)
     env = dict(os.environ, MITM_TESTER_RUN_DIR=str(run_dir), MITM_TESTER_STATE_DIR=str(SCRATCH))
     logfile = SCRATCH / "mitmdump.log"
     try:
@@ -154,7 +169,7 @@ def main():
                 ["mitmdump", "-q", "--mode", "regular", "--listen-host", "127.0.0.1",
                  "--listen-port", str(proxy_port), "--set", f"confdir={run_dir}",
                  "--set", "connection_strategy=eager", "--set", "ssl_insecure=true",
-                 "--set", "stream_large_bodies=1", "-s", str(PLUGIN / "scripts" / "probe.py")],
+                 "--set", "stream_large_bodies=1", "-s", str(probe_script)],
                 stdout=log, stderr=subprocess.STDOUT, env=env,
             )
             try:

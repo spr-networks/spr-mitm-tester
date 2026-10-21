@@ -60,6 +60,9 @@ jobs:
       - name: Build pull request image
         if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
         run: ./build_docker_compose.sh --set '*.platform=linux/amd64' --load
+      - name: Test packaged request recording
+        if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+        run: python3 tests/run_packaged_smoke.py ghcr.io/spr-networks/spr-mitm-tester:latest
       - name: Build and publish main image
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
@@ -71,6 +74,9 @@ jobs:
       - name: Verify clean install starts without authority config
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: python3 tests/smoke_clean_start.py "ghcr.io/spr-networks/spr-mitm-tester:sha-${GITHUB_SHA}"
+      - name: Test published request recording
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: python3 tests/run_packaged_smoke.py "ghcr.io/spr-networks/spr-mitm-tester:sha-${GITHUB_SHA}"
       - name: Resolve published image digest
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         id: digest

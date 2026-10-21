@@ -28,6 +28,10 @@ if ! python3 /scripts/prepare_authority.py \
   exit 1
 fi
 
+# Buildx normalizes image file mtimes to epoch 0. Mitmproxy's script watcher
+# only loads a script when its mtime is greater than 0, so stage it in tmpfs.
+cp /scripts/probe.py /run/mitm-tester/probe.py
+
 nft -f - <<EOF
 table inet mitm_tester {
   chain prerouting {
@@ -43,4 +47,5 @@ EOF
 
 mitmdump -q --mode transparent --listen-host 0.0.0.0 --listen-port 9999 \
   --set confdir=/run/mitm-tester --set connection_strategy=eager \
-  --set stream_large_bodies=1 -s /scripts/probe.py
+  --set ssl_verify_upstream_trusted_ca=/scripts/upstream-trust.pem \
+  --set stream_large_bodies=1 -s /run/mitm-tester/probe.py
