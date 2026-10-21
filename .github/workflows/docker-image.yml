@@ -31,6 +31,8 @@ jobs:
         run: python3 tests/run_acceptance.py
       - name: Test SPR sink contract
         run: python3 -m unittest discover -s tests -p 'test_*.py'
+      - name: Test connection summaries
+        run: node --test frontend/src/challenges.test.mjs
 
   version:
     needs: acceptance

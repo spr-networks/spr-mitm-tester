@@ -197,11 +197,18 @@ def main():
                             and event.get("authority") == "EM OV TLS CA - G3C"
                         ]
                         requests = [event for event in events if event.get("result") == "request"]
-                        if len(completed) >= 2 and len(requests) >= 2:
+                        responses = [event for event in events if event.get("result") == "upstream_response"]
+                        if len(completed) >= 2 and len(requests) >= 2 and len(responses) >= 2:
                             break
                     time.sleep(0.1)
                 else:
-                    raise AssertionError("two completed handshakes and requests were not recorded")
+                    raise AssertionError("two completed handshakes, requests, and responses were not recorded")
+                connection_ids = {event["connection_id"] for event in completed}
+                assert len(connection_ids) == 2, completed
+                assert {event["connection_id"] for event in requests} == connection_ids, requests
+                assert {event["connection_id"] for event in responses} == connection_ids, responses
+                assert {event["request_id"] for event in responses} == {event["request_id"] for event in requests}
+                assert all(event["status_code"] == 200 for event in responses), responses
                 expected_encoding = "base64" if os.environ.get("TEST_BINARY") == "1" else "utf-8"
                 expected_preview = (
                     base64.b64encode(REQUEST_BODY[:8192]).decode() if expected_encoding == "base64"

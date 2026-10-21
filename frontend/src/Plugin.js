@@ -1,17 +1,23 @@
 import React, { useEffect, useState } from 'react'
 import {
-  api, Badge, BadgeText, Button, ButtonText, Card, HStack, ListHeader, Page,
-  SectionHeader, Text, VStack
+  api, Badge, BadgeText, Button, ButtonText, Card, HStack, Link, LinkText,
+  ListHeader, Page, SectionHeader, Text, VStack
 } from '@spr-networks/plugin-ui'
+import { summarizeChallenges } from './challenges.mjs'
 
 const PLUGIN_BASE = `/plugins/${api.pluginURI() || 'spr-mitm-tester'}`
 const BRIDGE = 'mitmtst0'
 
 const eventLabel = {
-  attempted: 'Challenge started',
-  handshake_completed: 'TLS handshake completed',
-  handshake_failed: 'TLS handshake failed (inconclusive)',
-  disconnected_before_result: 'Disconnected (inconclusive)'
+  attempted: 'Connecting',
+  handshake_completed: 'Certificate accepted',
+  handshake_failed: 'TLS handshake failed',
+  disconnected_before_result: 'Disconnected before handshake'
+}
+
+const formatTime = (value) => {
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString()
 }
 
 export default function Plugin() {
@@ -46,51 +52,62 @@ export default function Plugin() {
 
   const sink = topology?.Sinks?.find((item) => item.Iface === BRIDGE)
   const ready = Boolean(status?.ready && sink?.Online)
-  const challenges = events.filter((event) => event.result !== 'request')
+  const challenges = summarizeChallenges(events).slice(0, 50)
   const requests = events.filter((event) => event.result === 'request').reverse().slice(0, 20)
+  const responses = new Map(events.filter((event) => event.result === 'upstream_response')
+    .map((event) => [event.request_id, event.status_code]))
 
   return (
     <Page testID="mitm-tester-page">
       <ListHeader
         title="MITM tester"
-        description="Challenge selected devices with an affected eMudhra intermediate on their normal TLS destinations"
         mark="CA"
         status={ready ? 'Sink ready' : 'Authority or proxy unavailable'}
         statusAction={ready ? 'success' : 'warning'}
       />
       <Card>
-        <SectionHeader title="Forwarding sink" />
+        <SectionHeader title="Sink" />
         <VStack space="sm">
           <Text>Bridge: {BRIDGE} · Sink IP: {sink?.IP || 'not detected'}</Text>
           <Text>Authority: {status?.authority
             ? `${status.authority.name} / ${status.authority.issued_by}`
             : 'No validated authority available; check container logs'}</Text>
-          <Text>In SPR, create a forwarding rule for the devices you want to test. Select the MITM tester sink as the destination and limit the rule to TCP port 443 while preserving the original destination.</Text>
-          <Text>For clients that prefer QUIC, add a separate UDP/443 block for those devices in SPR so they can fall back to TCP TLS.</Text>
-          <Text>The plugin advertises the sink and records TLS results. Device selection and forwarding rules are managed in SPR.</Text>
+          <Text>Select mitm-tester as a route destination in Topology.</Text>
+          <Link isExternal href="https://192.168.2.1/admin/topology">
+            <LinkText>Open Topology</LinkText>
+          </Link>
           {error && <Text color="$red600">{error}</Text>}
         </VStack>
       </Card>
       <Card>
-        <SectionHeader title="Recent TLS challenges" />
+        <SectionHeader title="Recent connections" />
         <VStack space="sm">
-          <Text>A completed forged-certificate handshake is evidence that this connection accepted the affected chain. A failed handshake is inconclusive.</Text>
-          {challenges.length === 0 && <Text>No challenges recorded yet.</Text>}
-          {[...challenges].reverse().slice(0, 50).map((event, index) => (
-            <HStack key={`${event.time}-${index}`} space="sm" alignItems="center" justifyContent="space-between">
-              <Text>{event.time} · {event.client_ip} · {event.sni}</Text>
-              <Badge action={event.result === 'handshake_completed' ? 'error' : 'warning'} variant="outline">
-                <BadgeText>{eventLabel[event.result] || event.result}</BadgeText>
-              </Badge>
+          {challenges.length === 0 && <Text>No connections recorded yet.</Text>}
+          {challenges.map((event) => (
+            <HStack key={event.key} space="sm" alignItems="center" justifyContent="space-between">
+              <VStack space="xs" flex={1}>
+                <Text fontWeight="bold">{event.client_ip} · {event.sni}</Text>
+                <Text size="sm">{formatTime(event.time)}</Text>
+              </VStack>
+              <VStack space="xs" alignItems="flex-end">
+                <Badge action={event.result === 'handshake_completed' ? 'success' : 'warning'} variant="outline">
+                  <BadgeText>{eventLabel[event.result] || event.result}</BadgeText>
+                </Badge>
+                {event.requestCount !== null && event.result === 'handshake_completed' && (
+                  <Text size="sm">{event.requestCount === 0
+                    ? 'No HTTP request seen'
+                    : `Device sent ${event.requestCount} HTTP request${event.requestCount === 1 ? '' : 's'}`}</Text>
+                )}
+                {event.responseCount > 0 && <Text size="sm">Destination replied · HTTP {event.lastStatus}</Text>}
+              </VStack>
             </HStack>
           ))}
         </VStack>
       </Card>
       <Card>
-        <SectionHeader title="Recent requests" count={requests.length} />
+        <SectionHeader title="HTTP requests captured" count={requests.length} />
         <VStack space="md">
-          <Text>Requests are shown after the device completes the TLS handshake. Bodies are streamed to the destination; the log keeps the first 8 KiB of each body.</Text>
-          {requests.length === 0 && <Text>No requests captured yet.</Text>}
+          {requests.length === 0 && <Text>No HTTP requests captured yet.</Text>}
           {requests.map((request) => (
             <VStack key={request.request_id} space="xs">
               <HStack space="sm" alignItems="center" justifyContent="space-between">
@@ -98,7 +115,8 @@ export default function Plugin() {
                   <Text fontWeight="bold" sx={{ '@base': { overflowWrap: 'anywhere' } }}>
                     {request.method} {request.url}{request.url_truncated ? '…' : ''}
                   </Text>
-                  <Text size="sm">{request.time} · {request.client_ip} · {request.sni}</Text>
+                  <Text size="sm">{formatTime(request.time)} · {request.client_ip} · {request.sni}</Text>
+                  {responses.has(request.request_id) && <Text size="sm">Destination replied · HTTP {responses.get(request.request_id)}</Text>}
                 </VStack>
                 <Button size="xs" variant="outline" onPress={() => setExpandedRequest(
                   expandedRequest === request.request_id ? null : request.request_id

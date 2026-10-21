@@ -46,7 +46,9 @@ class MITMTesterProbe:
         if not sni:
             data.ignore_connection = True
             return
-        self.pending[client.id] = {"client_ip": client_ip, "sni": sni}
+        self.pending[client.id] = {
+            "connection_id": str(client.id), "client_ip": client_ip, "sni": sni
+        }
         self.emit({**self.pending[client.id], "result": "attempted"})
 
     def tls_established_client(self, data):
@@ -108,6 +110,7 @@ class MITMTesterProbe:
         self.emit({
             "result": "request",
             "request_id": flow.id,
+            "connection_id": str(client.id),
             "client_ip": client.peername[0] if client.peername else "unknown",
             "sni": client.sni or "",
             "method": flow.request.method,
@@ -122,6 +125,12 @@ class MITMTesterProbe:
         })
 
     def responseheaders(self, flow):
+        self.emit({
+            "result": "upstream_response",
+            "request_id": flow.id,
+            "connection_id": str(flow.client_conn.id),
+            "status_code": flow.response.status_code,
+        })
         flow.response.stream = True
 
 
