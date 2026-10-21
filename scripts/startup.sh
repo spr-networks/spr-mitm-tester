@@ -7,6 +7,7 @@ case "$AUDIT_INTERFACE" in
 esac
 ip link set dev "$AUDIT_INTERFACE" mtu 1400
 mkdir -p /state/plugins/spr-mitm-tester /run/mitm-tester
+mitm_ssl_option=$(python3 /scripts/configure_upstream_tls.py)
 python3 /scripts/api.py &
 api_pid=$!
 trap 'kill "$api_pid" 2>/dev/null || true' EXIT INT TERM
@@ -47,5 +48,6 @@ EOF
 
 mitmdump -q --mode transparent --listen-host 0.0.0.0 --listen-port 9999 \
   --set confdir=/run/mitm-tester --set connection_strategy=eager \
+  --set "$mitm_ssl_option" \
   --set ssl_verify_upstream_trusted_ca=/scripts/upstream-trust.pem \
   --set stream_large_bodies=1 -s /run/mitm-tester/probe.py

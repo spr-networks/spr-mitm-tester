@@ -73,7 +73,10 @@ class Handler(BaseHTTPRequestHandler):
         if route == "/status":
             authority_path = RUN_DIR / "authority.json"
             authority = json.loads(authority_path.read_text()) if authority_path.exists() else None
-            return self.respond_json({"ready": proxy_ready(), "authority": authority})
+            upstream_path = RUN_DIR / "upstream-tls.json"
+            upstream = json.loads(upstream_path.read_text()) if upstream_path.exists() else {}
+            return self.respond_json({"ready": proxy_ready(), "authority": authority,
+                                      "verify_upstream_tls": upstream.get("verify_upstream_tls")})
         if route == "/events":
             return self.respond_json(read_events())
         if route == "/topology":

@@ -75,6 +75,9 @@ export default function Plugin() {
           <Text>Authority: {status?.authority
             ? `${status.authority.name} / ${status.authority.issued_by}`
             : 'No validated authority available; check container logs'}</Text>
+          <Text>Upstream TLS: {status?.verify_upstream_tls === false
+            ? 'Accept any server certificate'
+            : status?.verify_upstream_tls === true ? 'Verify server certificate' : 'Unknown'}</Text>
           <Text>Select mitm-tester as a route destination in Topology.</Text>
           <Link isExternal href="https://192.168.2.1/admin/topology">
             <LinkText>Open Topology</LinkText>
