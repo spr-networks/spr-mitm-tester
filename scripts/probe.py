@@ -1,4 +1,4 @@
-"""Challenge each client/SNI once and record bounded HTTP request previews."""
+"""Challenge every SNI-bearing connection and record bounded HTTP request previews."""
 
 import base64
 import json
@@ -16,7 +16,6 @@ URL_CHARS = 4096
 
 class MITMTesterProbe:
     def __init__(self):
-        self.attempted = set()
         self.pending = {}
         self.authority = json.loads((RUN_DIR / "authority.json").read_text())
 
@@ -47,11 +46,6 @@ class MITMTesterProbe:
         if not sni:
             data.ignore_connection = True
             return
-        target = (client_ip, sni)
-        if target in self.attempted:
-            data.ignore_connection = True
-            return
-        self.attempted.add(target)
         self.pending[client.id] = {"client_ip": client_ip, "sni": sni}
         self.emit({**self.pending[client.id], "result": "attempted"})
 

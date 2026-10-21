@@ -175,43 +175,46 @@ def main():
             try:
                 wait_for_proxy(proxy, proxy_port, logfile)
                 trust_file = root_file if trust == "root" else cert_file
-                leaf = connect_through_proxy(proxy_port, upstream_port, trust_file, trust == "intermediate")
-                assert leaf.issuer == intermediate.subject
-                sans = leaf.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
-                assert HOSTNAME in sans.get_values_for_type(x509.DNSName)
-                intermediate.public_key().verify(
-                    leaf.signature, leaf.tbs_certificate_bytes, ec.ECDSA(leaf.signature_hash_algorithm)
-                )
+                # A second connection from the same client IP and SNI must also
+                # receive a forged leaf, rather than reverting to pass-through.
+                for _ in range(2):
+                    leaf = connect_through_proxy(proxy_port, upstream_port, trust_file, trust == "intermediate")
+                    assert leaf.issuer == intermediate.subject
+                    sans = leaf.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
+                    assert HOSTNAME in sans.get_values_for_type(x509.DNSName)
+                    intermediate.public_key().verify(
+                        leaf.signature, leaf.tbs_certificate_bytes, ec.ECDSA(leaf.signature_hash_algorithm)
+                    )
                 deadline = time.monotonic() + 5
                 while time.monotonic() < deadline:
                     events_file = SCRATCH / "events.jsonl"
                     if events_file.exists():
                         events = [json.loads(line) for line in events_file.read_text().splitlines()]
-                        completed = any(
+                        completed = [event for event in events if
                             event.get("result") == "handshake_completed"
                             and event.get("sni") == HOSTNAME
                             and event.get("client_ip") == "127.0.0.1"
                             and event.get("authority") == "EM OV TLS CA - G3C"
-                            for event in events
-                        )
-                        request = next((event for event in events if event.get("result") == "request"), None)
-                        if completed and request:
+                        ]
+                        requests = [event for event in events if event.get("result") == "request"]
+                        if len(completed) >= 2 and len(requests) >= 2:
                             break
                     time.sleep(0.1)
                 else:
-                    raise AssertionError("no completed handshake and request recorded")
-                assert request["method"] == "POST", request
-                assert request["url"].endswith("/telemetry?unit=7"), request
-                assert ["x-device", "sensor-7"] in [[name.lower(), value] for name, value in request["headers"]]
-                assert request["body_bytes"] == len(REQUEST_BODY), request
+                    raise AssertionError("two completed handshakes and requests were not recorded")
                 expected_encoding = "base64" if os.environ.get("TEST_BINARY") == "1" else "utf-8"
                 expected_preview = (
                     base64.b64encode(REQUEST_BODY[:8192]).decode() if expected_encoding == "base64"
                     else REQUEST_BODY[:8192].decode()
                 )
-                assert request["body_preview"] == expected_preview, request
-                assert request["body_encoding"] == expected_encoding, request
-                assert request["body_truncated"] is True, request
+                for request in requests:
+                    assert request["method"] == "POST", request
+                    assert request["url"].endswith("/telemetry?unit=7"), request
+                    assert ["x-device", "sensor-7"] in [[name.lower(), value] for name, value in request["headers"]]
+                    assert request["body_bytes"] == len(REQUEST_BODY), request
+                    assert request["body_preview"] == expected_preview, request
+                    assert request["body_encoding"] == expected_encoding, request
+                    assert request["body_truncated"] is True, request
                 assert (events_file.stat().st_mode & 0o777) == 0o600
                 print(f"PASS: {HOSTNAME} leaf signed by {intermediate.subject.rfc4514_string()} "
                       f"({issuer}, client trusts {trust})")
