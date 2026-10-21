@@ -1,6 +1,29 @@
 # SPR MITM tester 
 
-This is a tool to test IOT devices for MITM devices.
+This plugin tests network devices for MITM issues, in particular the [eMudhra subordinate CA issue](https://emudhra.com/en/post/certificate-security-incident).
+
+Devices with CA stores that were updated after April 30, 2025 could carry the vulnerable certificate. 
+```The key sequence of events:
+
+April 30, 2025: The eight intermediates were created in a Key Generation Ceremony.
+Mid-2025: The hierarchy was included in browser trust lists. It has since passed two independent audit cycles.
+October 18, 2026 (late evening, India time): We were made aware of the issue. The researcher notified Apple, Google, Microsoft and Mozilla at the same time.
+October 19, 2026: We revoked all eight intermediates.
+``` 
+
+To use this plugin install it on the plugins page. Next, select a device in topology you'd like to route to the destination.
+
+The sink for this plugin is named `mitm tester`
+
+<img width="458" height="624" alt="image" src="https://github.com/user-attachments/assets/138a8cb1-625e-4e49-9f52-0579fff860e9" />
+
+
+Once set up, navigate to the plugin in the menu bar
+
+
+<img width="1009" height="600" alt="image" src="https://github.com/user-attachments/assets/a9b87b0f-2963-4de1-a4c0-0f66b54bd8e1" />
+
+
 
 AI notes below
 
