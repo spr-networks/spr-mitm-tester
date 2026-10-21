@@ -28,6 +28,7 @@ export function summarizeChallenges(events) {
         requestCount: key ? 0 : null,
         responseCount: 0,
         lastStatus: null,
+        upstreamError: null,
         protocol: null,
         clientDataBytes: 0,
         serverDataBytes: 0,
@@ -55,6 +56,8 @@ export function summarizeChallenges(events) {
     } else if (event.result === 'upstream_response') {
       row.responseCount += 1
       row.lastStatus = event.status_code
+    } else if (event.result === 'upstream_tls_failed') {
+      row.upstreamError = event.detail || 'unknown error'
     } else if (event.result === 'websocket_opened' || event.result === 'tcp_opened') {
       row.protocol = event.result === 'websocket_opened' ? 'WebSocket' : 'TCP'
     } else if (event.result === 'websocket_message' || event.result === 'tcp_data') {

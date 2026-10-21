@@ -89,6 +89,15 @@ class MITMTesterProbe:
         if probe:
             self.emit({**probe, "result": "handshake_failed", "detail": data.conn.error or "unknown"})
 
+    def tls_failed_server(self, data):
+        client = data.context.client
+        if client.sni:
+            self.emit({
+                **self.client_fields(client),
+                "result": "upstream_tls_failed",
+                "detail": (data.conn.error or "unknown")[:512],
+            })
+
     def client_disconnected(self, client):
         probe = self.pending.pop(client.id, None)
         if probe:

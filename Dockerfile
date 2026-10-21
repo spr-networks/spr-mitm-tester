@@ -34,13 +34,16 @@ COPY data/roots/ /scripts/roots/
 # validating upstream TLS against its existing system roots plus this bridge to
 # ISRG Root X1; do not replace the system trust store or disable verification.
 COPY data/upstream/root-yr-by-x1.pem /scripts/root-yr-by-x1.pem
+# Hue cloud endpoints used by the test device chain to this private root.
+# Keep it pinned in the image so their upstream TLS can be verified.
+COPY data/upstream/philips-hue-root.pem /scripts/philips-hue-root.pem
 # The reporter published this already-compromised key. Pin its exact bytes so
 # a clean install can use the affected emSign chain without runtime downloads.
 COPY data/certs/em-ov-tls-ca-g3c-emsign.pem /scripts/example-authority.crt
 ADD --checksum=sha256:8b91d6259bd3729931f063be17a8157ebf8209f4ec01d0be0d6c67be269f4fe2 https://gist.githubusercontent.com/Fluepke/9a103c7f990c3cc2fb5002f7476f2f48/raw/adecc309d3aed74c9590be1a7634b09dfcec1756/private.pem /scripts/example-authority.key
 COPY --from=builder-ui /app/build /ui/
 RUN chmod 0400 /scripts/example-authority.key && chmod 0755 /scripts/startup.sh && \
-    cat /etc/ssl/certs/ca-certificates.crt /scripts/root-yr-by-x1.pem > /scripts/upstream-trust.pem && \
+    cat /etc/ssl/certs/ca-certificates.crt /scripts/root-yr-by-x1.pem /scripts/philips-hue-root.pem > /scripts/upstream-trust.pem && \
     python3 /scripts/prepare_authority.py \
       --cert /scripts/example-authority.crt \
       --key /scripts/example-authority.key

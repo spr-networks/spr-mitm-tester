@@ -96,6 +96,7 @@ export default function Plugin() {
                 <Badge action={event.result === 'handshake_completed' ? 'success' : 'warning'} variant="outline">
                   <BadgeText>{eventLabel[event.result] || event.result}</BadgeText>
                 </Badge>
+                {event.upstreamError && <Text size="sm">Destination TLS failed: {event.upstreamError}</Text>}
                 {event.result === 'handshake_completed' && event.requestCount === null &&
                   <Text size="sm">Older record · data not linked</Text>}
                 {event.result === 'handshake_completed' && event.requestCount !== null && (
@@ -103,7 +104,7 @@ export default function Plugin() {
                     {event.requestCount > 0 && <Text size="sm">Device sent {event.requestCount} HTTP request{event.requestCount === 1 ? '' : 's'}</Text>}
                     {event.clientDataBytes > 0 && <Text size="sm">Device sent {event.clientDataBytes} bytes over {event.protocol}</Text>}
                     {event.serverDataBytes > 0 && <Text size="sm">Server sent {event.serverDataBytes} bytes over {event.protocol}</Text>}
-                    {event.requestCount === 0 && event.clientDataBytes === 0 && event.serverDataBytes === 0 &&
+                    {!event.upstreamError && event.requestCount === 0 && event.clientDataBytes === 0 && event.serverDataBytes === 0 &&
                       <Text size="sm">No application data recorded</Text>}
                   </>
                 )}

@@ -52,3 +52,15 @@ test('WebSocket and TCP data are attributed to their own TLS connections', () =>
   assert.equal(rows[1].clientDataBytes, 17)
   assert.equal(rows[1].serverDataBytes, 8)
 })
+
+test('upstream TLS failure is shown on the matching accepted client connection', () => {
+  const rows = summarizeChallenges([
+    { connection_id: 'one', result: 'attempted', client_ip: '192.0.2.8', sni: 'diag.meethue.com', time: '2026-10-21T01:00:00Z' },
+    { connection_id: 'one', result: 'upstream_tls_failed', detail: 'certificate verify failed', time: '2026-10-21T01:00:01Z' },
+    { connection_id: 'one', result: 'handshake_completed', time: '2026-10-21T01:00:02Z' }
+  ])
+
+  assert.equal(rows.length, 1)
+  assert.equal(rows[0].result, 'handshake_completed')
+  assert.equal(rows[0].upstreamError, 'certificate verify failed')
+})

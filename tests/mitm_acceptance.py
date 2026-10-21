@@ -231,19 +231,43 @@ def main():
         probe_script = run_dir / "probe.py"
         shutil.copyfile(scripts_dir / "probe.py", probe_script)
     env = dict(os.environ, MITM_TESTER_RUN_DIR=str(run_dir), MITM_TESTER_STATE_DIR=str(SCRATCH))
+    verify_upstream = os.environ.get("TEST_VERIFY_UPSTREAM") == "1"
     logfile = SCRATCH / "mitmdump.log"
     try:
         with logfile.open("wb") as log:
             proxy = subprocess.Popen(
                 ["mitmdump", "-q", "--mode", "regular", "--listen-host", "127.0.0.1",
                  "--listen-port", str(proxy_port), "--set", f"confdir={run_dir}",
-                 "--set", "connection_strategy=eager", "--set", "ssl_insecure=true",
+                 "--set", "connection_strategy=eager",
+                 "--set", f"ssl_insecure={'false' if verify_upstream else 'true'}",
                  "--set", "stream_large_bodies=1", "-s", str(probe_script)],
                 stdout=log, stderr=subprocess.STDOUT, env=env,
             )
             try:
                 wait_for_proxy(proxy, proxy_port, logfile)
                 trust_file = root_file if trust == "root" else cert_file
+                if verify_upstream:
+                    try:
+                        with tls_client_through_proxy(proxy_port, upstream_port, trust_file, False):
+                            pass
+                    except (OSError, ssl.SSLError):
+                        pass
+                    deadline = time.monotonic() + 5
+                    while time.monotonic() < deadline:
+                        events_file = SCRATCH / "events.jsonl"
+                        if events_file.exists():
+                            events = [json.loads(line) for line in events_file.read_text().splitlines()]
+                            failures = [event for event in events if event.get("result") == "upstream_tls_failed"]
+                            if failures:
+                                assert failures[0]["sni"] == HOSTNAME, failures
+                                assert failures[0]["client_ip"] == "127.0.0.1", failures
+                                assert "certificate verify failed" in failures[0]["detail"].lower(), failures
+                                print("PASS: upstream certificate verification failure is recorded")
+                                break
+                        time.sleep(0.1)
+                    else:
+                        raise AssertionError(f"upstream TLS failure was not recorded: {logfile.read_text()[-2000:]}")
+                    return
                 # A second connection from the same client IP and SNI must also
                 # receive a forged leaf, rather than reverting to pass-through.
                 for _ in range(2):

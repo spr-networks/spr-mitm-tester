@@ -50,6 +50,13 @@ def main():
                 )
                 subprocess.run(command, check=True)
 
+        print("Testing upstream verification failure recording", flush=True)
+        subprocess.run(
+            common[:image_index] + ["-e", "TEST_ISSUER=emsign", "-e", "TEST_TRUST=root",
+                                    "-e", "TEST_VERIFY_UPSTREAM=1"] + common[image_index:],
+            check=True,
+        )
+
 
 if __name__ == "__main__":
     main()
