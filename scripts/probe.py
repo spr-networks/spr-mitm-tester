@@ -1,4 +1,4 @@
-"""Challenge every SNI-bearing connection and record bounded HTTP request previews."""
+"""Challenge every SNI connection and record bounded application data previews."""
 
 import base64
 import json
@@ -37,6 +37,34 @@ class MITMTesterProbe:
         os.fchmod(descriptor, 0o600)
         with os.fdopen(descriptor, "a", encoding="utf-8") as target:
             target.write(json.dumps(event, separators=(",", ":")) + "\n")
+
+    @staticmethod
+    def client_fields(client):
+        return {
+            "connection_id": str(client.id),
+            "client_ip": client.peername[0] if client.peername else "unknown",
+            "sni": client.sni or "",
+        }
+
+    @staticmethod
+    def data_fields(content, force_base64=False):
+        preview = content[:BODY_PREVIEW_BYTES]
+        try:
+            value = preview.decode("utf-8")
+            if force_base64 or any(
+                not character.isprintable() and character not in "\r\n\t" for character in value
+            ):
+                raise ValueError("binary data")
+            encoding = "utf-8"
+        except (UnicodeDecodeError, ValueError):
+            value = base64.b64encode(preview).decode("ascii")
+            encoding = "base64"
+        return {
+            "data_bytes": len(content),
+            "data_preview": value,
+            "data_encoding": encoding,
+            "data_truncated": len(content) > len(preview),
+        }
 
     def tls_clienthello(self, data):
         client = data.context.client
@@ -132,6 +160,33 @@ class MITMTesterProbe:
             "status_code": flow.response.status_code,
         })
         flow.response.stream = True
+
+    def websocket_start(self, flow):
+        self.emit({**self.client_fields(flow.client_conn),
+                   "result": "websocket_opened", "request_id": flow.id})
+
+    def websocket_message(self, flow):
+        message = flow.websocket.messages[-1]
+        self.emit({
+            **self.client_fields(flow.client_conn),
+            **self.data_fields(message.content, force_base64=not message.is_text),
+            "result": "websocket_message",
+            "request_id": flow.id,
+            "direction": "client_to_server" if message.from_client else "server_to_client",
+            "message_type": "text" if message.is_text else "binary",
+        })
+
+    def tcp_start(self, flow):
+        self.emit({**self.client_fields(flow.client_conn), "result": "tcp_opened"})
+
+    def tcp_message(self, flow):
+        message = flow.messages[-1]
+        self.emit({
+            **self.client_fields(flow.client_conn),
+            **self.data_fields(message.content),
+            "result": "tcp_data",
+            "direction": "client_to_server" if message.from_client else "server_to_client",
+        })
 
 
 addons = [MITMTesterProbe()]

@@ -32,3 +32,23 @@ test('earlier events without connection IDs combine start and result without gue
   assert.equal(rows[0].result, 'handshake_completed')
   assert.equal(rows[0].requestCount, null)
 })
+
+test('WebSocket and TCP data are attributed to their own TLS connections', () => {
+  const rows = summarizeChallenges([
+    { connection_id: 'ws', result: 'handshake_completed', client_ip: '192.0.2.8', sni: 'ws.example', time: '2026-10-21T01:00:00Z' },
+    { connection_id: 'ws', result: 'websocket_opened', time: '2026-10-21T01:00:01Z' },
+    { connection_id: 'ws', result: 'websocket_message', direction: 'client_to_server', data_bytes: 17, time: '2026-10-21T01:00:02Z' },
+    { connection_id: 'ws', result: 'websocket_message', direction: 'server_to_client', data_bytes: 8, time: '2026-10-21T01:00:03Z' },
+    { connection_id: 'tcp', result: 'handshake_completed', client_ip: '192.0.2.8', sni: 'broker.example', time: '2026-10-21T01:01:00Z' },
+    { connection_id: 'tcp', result: 'tcp_opened', time: '2026-10-21T01:01:01Z' },
+    { connection_id: 'tcp', result: 'tcp_data', direction: 'client_to_server', data_bytes: 5, time: '2026-10-21T01:01:02Z' }
+  ])
+
+  assert.equal(rows.length, 2)
+  assert.equal(rows[0].protocol, 'TCP')
+  assert.equal(rows[0].clientDataBytes, 5)
+  assert.equal(rows[0].requestCount, 0)
+  assert.equal(rows[1].protocol, 'WebSocket')
+  assert.equal(rows[1].clientDataBytes, 17)
+  assert.equal(rows[1].serverDataBytes, 8)
+})

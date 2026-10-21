@@ -27,7 +27,12 @@ export function summarizeChallenges(events) {
         result: event.result,
         requestCount: key ? 0 : null,
         responseCount: 0,
-        lastStatus: null
+        lastStatus: null,
+        protocol: null,
+        clientDataBytes: 0,
+        serverDataBytes: 0,
+        clientDataMessages: 0,
+        serverDataMessages: 0
       }
       rows.push(row)
       if (key) {
@@ -50,6 +55,17 @@ export function summarizeChallenges(events) {
     } else if (event.result === 'upstream_response') {
       row.responseCount += 1
       row.lastStatus = event.status_code
+    } else if (event.result === 'websocket_opened' || event.result === 'tcp_opened') {
+      row.protocol = event.result === 'websocket_opened' ? 'WebSocket' : 'TCP'
+    } else if (event.result === 'websocket_message' || event.result === 'tcp_data') {
+      row.protocol = event.result === 'websocket_message' ? 'WebSocket' : 'TCP'
+      if (event.direction === 'client_to_server') {
+        row.clientDataBytes += event.data_bytes || 0
+        row.clientDataMessages += 1
+      } else {
+        row.serverDataBytes += event.data_bytes || 0
+        row.serverDataMessages += 1
+      }
     }
   }
 

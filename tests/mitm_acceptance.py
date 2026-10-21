@@ -1,10 +1,12 @@
 """Offline loopback test: a root-trusting client accepts a forged hostname leaf."""
 
 import base64
+import hashlib
 import json
 import os
 import shutil
 import socket
+import socketserver
 import ssl
 import subprocess
 import sys
@@ -31,6 +33,8 @@ REQUEST_BODY = (
 
 
 class UpstreamHandler(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+
     def do_POST(self):
         received = self.rfile.read(int(self.headers["Content-Length"]))
         body = b"upstream-ok:" + received
@@ -39,8 +43,36 @@ class UpstreamHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def do_GET(self):
+        assert self.headers.get("Upgrade", "").lower() == "websocket"
+        key = self.headers["Sec-WebSocket-Key"]
+        accept = base64.b64encode(hashlib.sha1(
+            (key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode()
+        ).digest()).decode()
+        self.send_response(101)
+        self.send_header("Upgrade", "websocket")
+        self.send_header("Connection", "Upgrade")
+        self.send_header("Sec-WebSocket-Accept", accept)
+        self.end_headers()
+        frame = self.rfile.read(2)
+        assert frame[0] == 0x81 and frame[1] & 0x80
+        length = frame[1] & 0x7f
+        mask = self.rfile.read(4)
+        payload = bytes(value ^ mask[index % 4] for index, value in enumerate(self.rfile.read(length)))
+        assert payload == b"websocket-from-device"
+        reply = b"websocket-from-server"
+        self.wfile.write(b"\x81" + bytes([len(reply)]) + reply)
+        self.wfile.flush()
+        self.close_connection = True
+
     def log_message(self, *_args):
         pass
+
+
+class RawEchoHandler(socketserver.BaseRequestHandler):
+    def handle(self):
+        payload = self.request.recv(8192)
+        self.request.sendall(b"\x20\x02\x00\x00" + payload)
 
 
 def make_upstream_certificate():
@@ -83,7 +115,7 @@ def wait_for_proxy(process, port, logfile):
     raise AssertionError(f"mitmdump did not listen: {logfile.read_text()[-2000:]}")
 
 
-def connect_through_proxy(proxy_port, upstream_port, trust_file, trust_intermediate):
+def tls_client_through_proxy(proxy_port, upstream_port, trust_file, trust_intermediate):
     raw = socket.create_connection(("127.0.0.1", proxy_port), timeout=10)
     raw.settimeout(10)
     raw.sendall(
@@ -101,7 +133,11 @@ def connect_through_proxy(proxy_port, upstream_port, trust_file, trust_intermedi
     if trust_intermediate:
         # Treat the intermediate as the client's trust anchor.
         context.verify_flags |= ssl.VERIFY_X509_PARTIAL_CHAIN
-    with context.wrap_socket(raw, server_hostname=HOSTNAME) as client:
+    return context.wrap_socket(raw, server_hostname=HOSTNAME)
+
+
+def connect_through_proxy(proxy_port, upstream_port, trust_file, trust_intermediate):
+    with tls_client_through_proxy(proxy_port, upstream_port, trust_file, trust_intermediate) as client:
         leaf = x509.load_der_x509_certificate(client.getpeercert(binary_form=True))
         client.sendall(
             f"POST /telemetry?unit=7 HTTP/1.1\r\nHost: {HOSTNAME}\r\n"
@@ -114,6 +150,33 @@ def connect_through_proxy(proxy_port, upstream_port, trust_file, trust_intermedi
             response += chunk
     assert b"upstream-ok:" + REQUEST_BODY in response, response[-500:]
     return leaf
+
+
+def send_websocket_message(proxy_port, upstream_port, trust_file, trust_intermediate):
+    with tls_client_through_proxy(proxy_port, upstream_port, trust_file, trust_intermediate) as client:
+        key = base64.b64encode(b"0123456789abcdef").decode()
+        client.sendall((
+            f"GET /stream HTTP/1.1\r\nHost: {HOSTNAME}\r\nUpgrade: websocket\r\n"
+            f"Connection: Upgrade\r\nSec-WebSocket-Key: {key}\r\n"
+            "Sec-WebSocket-Version: 13\r\n\r\n"
+        ).encode())
+        headers = b""
+        while b"\r\n\r\n" not in headers:
+            headers += client.recv(4096)
+        assert headers.startswith(b"HTTP/1.1 101"), headers
+        payload = b"websocket-from-device"
+        mask = b"abcd"
+        client.sendall(b"\x81" + bytes([0x80 | len(payload)]) + mask + bytes(
+            value ^ mask[index % 4] for index, value in enumerate(payload)
+        ))
+        assert b"websocket-from-server" in client.recv(4096)
+
+
+def send_raw_tcp_message(proxy_port, upstream_port, trust_file, trust_intermediate):
+    with tls_client_through_proxy(proxy_port, upstream_port, trust_file, trust_intermediate) as client:
+        payload = b"\x10\x0bMQTT-device"
+        client.sendall(payload)
+        assert client.recv(4096) == b"\x20\x02\x00\x00" + payload
 
 
 def main():
@@ -156,6 +219,12 @@ def main():
     server.socket = upstream_tls.wrap_socket(server.socket, server_side=True)
     server_thread = threading.Thread(target=server.serve_forever, daemon=True)
     server_thread.start()
+    raw_server = socketserver.ThreadingTCPServer(("127.0.0.1", 0), RawEchoHandler)
+    raw_server.daemon_threads = True
+    raw_port = raw_server.server_address[1]
+    raw_server.socket = upstream_tls.wrap_socket(raw_server.socket, server_side=True)
+    raw_thread = threading.Thread(target=raw_server.serve_forever, daemon=True)
+    raw_thread.start()
     proxy_port = free_port()
     probe_script = scripts_dir / "probe.py"
     if packaged:
@@ -222,6 +291,36 @@ def main():
                     assert request["body_preview"] == expected_preview, request
                     assert request["body_encoding"] == expected_encoding, request
                     assert request["body_truncated"] is True, request
+                if issuer == "emsign" and trust == "root":
+                    send_websocket_message(proxy_port, upstream_port, trust_file, False)
+                    send_raw_tcp_message(proxy_port, raw_port, trust_file, False)
+                    deadline = time.monotonic() + 5
+                    while time.monotonic() < deadline:
+                        events = [json.loads(line) for line in events_file.read_text().splitlines()]
+                        websocket_data = [event for event in events if event.get("result") == "websocket_message"]
+                        tcp_data = [event for event in events if event.get("result") == "tcp_data"]
+                        if len(websocket_data) >= 2 and len(tcp_data) >= 2:
+                            break
+                        time.sleep(0.1)
+                    else:
+                        raise AssertionError(f"WebSocket or TCP data missing: {logfile.read_text()[-2000:]}")
+                    assert {event["direction"] for event in websocket_data} == {
+                        "client_to_server", "server_to_client"
+                    }, websocket_data
+                    assert {event["data_preview"] for event in websocket_data} == {
+                        "websocket-from-device", "websocket-from-server"
+                    }, websocket_data
+                    assert all(event["data_encoding"] == "utf-8" for event in websocket_data)
+                    assert {event["direction"] for event in tcp_data} == {
+                        "client_to_server", "server_to_client"
+                    }, tcp_data
+                    assert all(event["data_encoding"] == "base64" for event in tcp_data), tcp_data
+                    assert {base64.b64decode(event["data_preview"]) for event in tcp_data} == {
+                        b"\x10\x0bMQTT-device", b"\x20\x02\x00\x00\x10\x0bMQTT-device"
+                    }, tcp_data
+                    assert len({event["connection_id"] for event in websocket_data}) == 1
+                    assert len({event["connection_id"] for event in tcp_data}) == 1
+                    assert websocket_data[0]["connection_id"] != tcp_data[0]["connection_id"]
                 assert (events_file.stat().st_mode & 0o777) == 0o600
                 print(f"PASS: {HOSTNAME} leaf signed by {intermediate.subject.rfc4514_string()} "
                       f"({issuer}, client trusts {trust})")
@@ -235,6 +334,8 @@ def main():
     finally:
         server.shutdown()
         server.server_close()
+        raw_server.shutdown()
+        raw_server.server_close()
 
 
 if __name__ == "__main__":

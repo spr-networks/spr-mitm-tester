@@ -25,6 +25,7 @@ export default function Plugin() {
   const [topology, setTopology] = useState(null)
   const [events, setEvents] = useState([])
   const [expandedRequest, setExpandedRequest] = useState(null)
+  const [expandedData, setExpandedData] = useState(null)
   const [error, setError] = useState('')
 
   useEffect(() => {
@@ -54,6 +55,8 @@ export default function Plugin() {
   const ready = Boolean(status?.ready && sink?.Online)
   const challenges = summarizeChallenges(events).slice(0, 50)
   const requests = events.filter((event) => event.result === 'request').reverse().slice(0, 20)
+  const dataEvents = events.filter((event) => event.result === 'websocket_message' || event.result === 'tcp_data')
+    .reverse().slice(0, 20)
   const responses = new Map(events.filter((event) => event.result === 'upstream_response')
     .map((event) => [event.request_id, event.status_code]))
 
@@ -93,10 +96,16 @@ export default function Plugin() {
                 <Badge action={event.result === 'handshake_completed' ? 'success' : 'warning'} variant="outline">
                   <BadgeText>{eventLabel[event.result] || event.result}</BadgeText>
                 </Badge>
-                {event.requestCount !== null && event.result === 'handshake_completed' && (
-                  <Text size="sm">{event.requestCount === 0
-                    ? 'No HTTP request seen'
-                    : `Device sent ${event.requestCount} HTTP request${event.requestCount === 1 ? '' : 's'}`}</Text>
+                {event.result === 'handshake_completed' && event.requestCount === null &&
+                  <Text size="sm">Older record · data not linked</Text>}
+                {event.result === 'handshake_completed' && event.requestCount !== null && (
+                  <>
+                    {event.requestCount > 0 && <Text size="sm">Device sent {event.requestCount} HTTP request{event.requestCount === 1 ? '' : 's'}</Text>}
+                    {event.clientDataBytes > 0 && <Text size="sm">Device sent {event.clientDataBytes} bytes over {event.protocol}</Text>}
+                    {event.serverDataBytes > 0 && <Text size="sm">Server sent {event.serverDataBytes} bytes over {event.protocol}</Text>}
+                    {event.requestCount === 0 && event.clientDataBytes === 0 && event.serverDataBytes === 0 &&
+                      <Text size="sm">No application data recorded</Text>}
+                  </>
                 )}
                 {event.responseCount > 0 && <Text size="sm">Destination replied · HTTP {event.lastStatus}</Text>}
               </VStack>
@@ -143,6 +152,40 @@ export default function Plugin() {
               )}
             </VStack>
           ))}
+        </VStack>
+      </Card>
+      <Card>
+        <SectionHeader title="WebSocket and TCP data" count={dataEvents.length} />
+        <VStack space="md">
+          {dataEvents.length === 0 && <Text>No WebSocket or TCP data captured yet.</Text>}
+          {dataEvents.map((event, index) => {
+            const eventKey = `${event.time}-${index}`
+            const protocol = event.result === 'websocket_message' ? 'WebSocket' : 'TCP'
+            const direction = event.direction === 'client_to_server' ? 'Device → server' : 'Server → device'
+            return (
+              <VStack key={eventKey} space="xs">
+                <HStack space="sm" alignItems="center" justifyContent="space-between">
+                  <VStack space="xs" flex={1}>
+                    <Text fontWeight="bold">{protocol}{event.message_type ? ` ${event.message_type}` : ''} · {direction} · {event.data_bytes} bytes</Text>
+                    <Text size="sm">{formatTime(event.time)} · {event.client_ip} · {event.sni}</Text>
+                  </VStack>
+                  <Button size="xs" variant="outline" onPress={() => setExpandedData(
+                    expandedData === eventKey ? null : eventKey
+                  )}>
+                    <ButtonText>{expandedData === eventKey ? 'Hide data' : 'View data'}</ButtonText>
+                  </Button>
+                </HStack>
+                {expandedData === eventKey && (
+                  <VStack space="xs">
+                    <Text fontWeight="bold">Data preview{event.data_truncated ? ' (truncated)' : ''}</Text>
+                    <Text size="sm" fontFamily="$mono" selectable sx={{ '@base': { whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' } }}>
+                      {event.data_encoding === 'base64' ? 'Base64: ' : ''}{event.data_preview || '(empty)'}
+                    </Text>
+                  </VStack>
+                )}
+              </VStack>
+            )
+          })}
         </VStack>
       </Card>
     </Page>
