@@ -114,13 +114,13 @@ def wait_for_proxy(process, port, logfile):
     deadline = time.monotonic() + 20
     while time.monotonic() < deadline:
         if process.poll() is not None:
-            raise AssertionError(f"mitmdump exited: {logfile.read_text()[-2000:]}")
+            raise AssertionError(f"proxy exited: {logfile.read_text()[-2000:]}")
         try:
             with socket.create_connection(("127.0.0.1", port), timeout=0.2):
                 return
         except OSError:
             time.sleep(0.1)
-    raise AssertionError(f"mitmdump did not listen: {logfile.read_text()[-2000:]}")
+    raise AssertionError(f"proxy did not listen: {logfile.read_text()[-2000:]}")
 
 
 def tls_client_through_proxy(proxy_port, upstream_port, trust_file, trust_intermediate):
@@ -240,11 +240,19 @@ def main():
         shutil.copyfile(scripts_dir / "probe.py", probe_script)
     env = dict(os.environ, MITM_TESTER_RUN_DIR=str(run_dir), MITM_TESTER_STATE_DIR=str(SCRATCH))
     verify_upstream = os.environ.get("TEST_VERIFY_UPSTREAM") == "1"
-    logfile = SCRATCH / "mitmdump.log"
+    proxy_binary = os.environ.get("MITM_TESTER_PROXY_BINARY", "mitmdump")
+    assert proxy_binary in ("mitmdump", "mitmweb")
+    proxy_args = [proxy_binary]
+    if proxy_binary == "mitmdump":
+        proxy_args.append("-q")
+    else:
+        proxy_args += ["--set", "web_host=127.0.0.1", "--set", f"web_port={free_port()}",
+                       "--set", "web_open_browser=false", "--set", "web_password=test-token"]
+    logfile = SCRATCH / "proxy.log"
     try:
         with logfile.open("wb") as log:
             proxy = subprocess.Popen(
-                ["mitmdump", "-q", "--mode", "regular", "--listen-host", "127.0.0.1",
+                proxy_args + ["--mode", "regular", "--listen-host", "127.0.0.1",
                  "--listen-port", str(proxy_port), "--set", f"confdir={run_dir}",
                  "--set", "connection_strategy=eager",
                  "--set", f"ssl_insecure={'false' if verify_upstream else 'true'}",

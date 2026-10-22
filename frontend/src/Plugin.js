@@ -70,6 +70,9 @@ export default function Plugin() {
 
   const sink = topology?.Sinks?.find((item) => item.Iface === BRIDGE)
   const ready = Boolean(status?.ready && sink?.Online)
+  const sprHost = typeof window === 'undefined' ? 'SPR_HOST' : window.location.hostname
+  const webToken = status?.mitmweb?.token
+  const webUrl = webToken ? `http://127.0.0.1:18081/?token=${encodeURIComponent(webToken)}` : ''
   const challenges = summarizeChallenges(events).slice(0, 50)
   const requests = summarizeRequests(events).slice(0, 20)
   const dataEvents = events.filter((event) => event.result === 'websocket_message' || event.result === 'tcp_data')
@@ -112,6 +115,19 @@ export default function Plugin() {
             <LinkText>Open Topology</LinkText>
           </Link>
           {error && <Text color="$red600">{error}</Text>}
+        </VStack>
+      </Card>
+      <Card>
+        <SectionHeader title="mitmproxy flow view" />
+        <VStack space="sm">
+          <Text>Run this SSH tunnel on your computer:</Text>
+          <Text fontFamily="$mono" selectable sx={{ '@base': { overflowWrap: 'anywhere' } }}>
+            ssh -N -L 127.0.0.1:18081:{sink?.IP || 'SINK_IP'}:8081 root@{sprHost}
+          </Text>
+          {status?.mitmweb?.ready && webUrl
+            ? <Link isExternal href={webUrl}><LinkText>Open mitmproxy</LinkText></Link>
+            : <Text size="sm">mitmproxy flow view is starting or unavailable.</Text>}
+          <Text size="sm">For a TLS host with no HTTP flow, set tcp_hosts for that SNI in mitmproxy Options to inspect decrypted TCP bytes on new connections.</Text>
         </VStack>
       </Card>
       <Card>

@@ -20,6 +20,7 @@ def main(image):
             "--mount", f"type=bind,src={PLUGIN},dst=/plugin,readonly",
             "-e", "HOME=/scratch", "-e", "TMPDIR=/scratch",
             "-e", "PYTHONDONTWRITEBYTECODE=1", "-e", "TEST_PACKAGED=1",
+            "-e", "MITM_TESTER_PROXY_BINARY=mitmweb",
             "--entrypoint", "python3", image, "/plugin/tests/mitm_acceptance.py",
         ],
         check=True,

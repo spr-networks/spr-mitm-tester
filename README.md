@@ -63,7 +63,17 @@ In SPR:
 
 The sandboxed plugin UI reads only its own status, topology, and event endpoints. It does not call the SPR PFW, firewall, or device APIs. Installing or starting this plugin does not intercept device traffic by itself. If the proxy stops while forwarding rules remain, selected TCP/443 traffic can fail until routing is disabled.
 
-The container listens for redirected TLS on TCP port `9999` inside its network namespace, and serves its plugin API on a Unix socket. The `8080-8081/tcp` text in `docker ps` is inherited `EXPOSE` metadata from the mitmproxy base image; the plugin does not listen on those ports, and the Compose files publish no host ports.
+The container listens for redirected TLS on TCP port `9999` inside its network namespace, and serves its plugin API on a Unix socket. It also runs mitmweb on guest port `8081` to show live mitmproxy flows and errors. Guest nftables permits that port only from the SPR host's bridge gateway, and a random token protects the UI. The Compose files publish no host ports. The `8080/tcp` text in `docker ps` is inherited `EXPOSE` metadata and is unused.
+
+To open mitmweb, use the sink IP shown in the plugin UI and run an SSH tunnel from your computer to the SPR host. For example, if the sink IP is `192.168.1.10` and SPR is `192.168.2.1`:
+
+```sh
+ssh -N -L 127.0.0.1:18081:192.168.1.10:8081 root@192.168.2.1
+```
+
+Keep the tunnel running, then click **Open mitmproxy** in the plugin UI. Use your SPR SSH account if it is not `root`. The link carries the token from the plugin's authenticated status endpoint. Flow details live in mitmweb's memory for the lifetime of the container; the plugin does not save a full flow file.
+
+If a host completes TLS but has no HTTP flow, open mitmweb's Options and set `tcp_hosts` to a regex matching that SNI, such as `^diag\.meethue\.com$`. This tells mitmproxy to handle new connections for that host as generic TLS/TCP and display decrypted chunks. HTTP request parsing is disabled for the matching host while this option is set. Clear `tcp_hosts` to restore normal HTTP handling. If no TCP chunks appear either, the client has not sent application bytes through that connection.
 
 The event log records HTTP request headers as soon as mitmproxy parses them, then adds the bounded body preview when the request completes. An interrupted request keeps its headers and any captured body preview. It also records WebSocket text or binary messages and generic TCP chunks in both directions when mitmproxy identifies those protocols. Each WebSocket or TCP record includes direction, byte count, and up to 8 KiB of text or Base64 data. TCP chunks are arbitrary stream segments, not application messages; the plugin does not decode MQTT. Connection rows show upstream TLS results, parse errors, and whether a TLS connection closed without a parsed request or data. The local event file is capped at 2 MiB. Connections recorded before version 0.0.2 lack connection IDs, so their old handshake rows cannot be matched reliably to request or data records.
 

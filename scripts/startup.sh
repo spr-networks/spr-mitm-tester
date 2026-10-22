@@ -33,6 +33,19 @@ fi
 # only loads a script when its mtime is greater than 0, so stage it in tmpfs.
 cp /scripts/probe.py /run/mitm-tester/probe.py
 
+web_token_file=/state/plugins/spr-mitm-tester/mitmweb-token
+if [ ! -s "$web_token_file" ]; then
+  umask 077
+  python3 -c 'import secrets; print(secrets.token_urlsafe(32))' > "$web_token_file"
+fi
+chmod 0600 "$web_token_file"
+web_token=$(cat "$web_token_file")
+web_gateway=$(ip -4 route show default dev "$AUDIT_INTERFACE" | awk 'NR == 1 { print $3 }')
+if [ -z "$web_gateway" ]; then
+  echo "No host gateway on $AUDIT_INTERFACE for the mitmweb access rule" >&2
+  exit 1
+fi
+
 nft -f - <<EOF
 table inet mitm_tester {
   chain prerouting {
@@ -43,10 +56,17 @@ table inet mitm_tester {
     type filter hook forward priority filter; policy accept;
     iifname "$AUDIT_INTERFACE" drop
   }
+  chain input {
+    type filter hook input priority filter; policy accept;
+    iifname "$AUDIT_INTERFACE" tcp dport 8081 ip saddr "$web_gateway" accept
+    iifname "$AUDIT_INTERFACE" tcp dport 8081 drop
+  }
 }
 EOF
 
-mitmdump -q --mode transparent --listen-host 0.0.0.0 --listen-port 9999 \
+mitmweb --mode transparent --listen-host 0.0.0.0 --listen-port 9999 \
+  --set web_host=0.0.0.0 --set web_port=8081 --set web_open_browser=false \
+  --set "web_password=$web_token" \
   --set confdir=/run/mitm-tester --set connection_strategy=eager \
   --set "$mitm_ssl_option" \
   --set ssl_verify_upstream_trusted_ca=/scripts/upstream-trust.pem \

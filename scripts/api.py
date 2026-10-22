@@ -17,6 +17,7 @@ from configure_upstream_tls import STATE_CONFIG, configured_verify_upstream_tls
 SOCKET_PATH = Path(os.environ.get("SPR_KRUN_PLUGIN_SOCKET", "/state/plugins/spr-mitm-tester/socket.sock"))
 RUN_DIR = Path("/run/mitm-tester")
 EVENTS = Path("/state/plugins/spr-mitm-tester/events.jsonl")
+WEB_TOKEN = Path("/state/plugins/spr-mitm-tester/mitmweb-token")
 UI = Path("/ui")
 INTERFACE = "mitmtst0"
 
@@ -36,6 +37,14 @@ def proxy_ready():
         return False
     try:
         with socket.create_connection(("127.0.0.1", 9999), timeout=0.2):
+            return True
+    except OSError:
+        return False
+
+
+def web_ready():
+    try:
+        with socket.create_connection(("127.0.0.1", 8081), timeout=0.2):
             return True
     except OSError:
         return False
@@ -78,9 +87,11 @@ class Handler(BaseHTTPRequestHandler):
             authority = json.loads(authority_path.read_text()) if authority_path.exists() else None
             upstream_path = RUN_DIR / "upstream-tls.json"
             upstream = json.loads(upstream_path.read_text()) if upstream_path.exists() else {}
+            token = WEB_TOKEN.read_text().strip() if WEB_TOKEN.exists() else None
             return self.respond_json({"ready": proxy_ready(), "authority": authority,
                                       "verify_upstream_tls": upstream.get("verify_upstream_tls"),
-                                      "configured_verify_upstream_tls": configured_verify_upstream_tls(STATE_CONFIG)})
+                                      "configured_verify_upstream_tls": configured_verify_upstream_tls(STATE_CONFIG),
+                                      "mitmweb": {"ready": web_ready(), "token": token}})
         if route == "/events":
             return self.respond_json(read_events())
         if route == "/topology":
