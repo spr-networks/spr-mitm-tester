@@ -7,9 +7,12 @@ import os
 import socket
 import socketserver
 import struct
+import tempfile
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import urlsplit
+
+from configure_upstream_tls import STATE_CONFIG, configured_verify_upstream_tls
 
 SOCKET_PATH = Path(os.environ.get("SPR_KRUN_PLUGIN_SOCKET", "/state/plugins/spr-mitm-tester/socket.sock"))
 RUN_DIR = Path("/run/mitm-tester")
@@ -59,9 +62,9 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *_args):
         pass
 
-    def respond_json(self, value):
+    def respond_json(self, value, status=200):
         payload = json.dumps(value).encode()
-        self.send_response(200)
+        self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Cache-Control", "no-store")
         self.send_header("Content-Length", str(len(payload)))
@@ -76,7 +79,8 @@ class Handler(BaseHTTPRequestHandler):
             upstream_path = RUN_DIR / "upstream-tls.json"
             upstream = json.loads(upstream_path.read_text()) if upstream_path.exists() else {}
             return self.respond_json({"ready": proxy_ready(), "authority": authority,
-                                      "verify_upstream_tls": upstream.get("verify_upstream_tls")})
+                                      "verify_upstream_tls": upstream.get("verify_upstream_tls"),
+                                      "configured_verify_upstream_tls": configured_verify_upstream_tls(STATE_CONFIG)})
         if route == "/events":
             return self.respond_json(read_events())
         if route == "/topology":
@@ -100,6 +104,36 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(content)))
         self.end_headers()
         self.wfile.write(content)
+
+    def do_PUT(self):
+        if urlsplit(self.path).path != "/settings":
+            self.send_error(404)
+            return
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            if not 0 < length <= 1024:
+                raise ValueError("Invalid settings length")
+            settings = json.loads(self.rfile.read(length))
+            if (not isinstance(settings, dict) or set(settings) != {"verify_upstream_tls"}
+                    or not isinstance(settings["verify_upstream_tls"], bool)):
+                raise ValueError('Expected {"verify_upstream_tls": true or false}')
+        except (ValueError, json.JSONDecodeError):
+            return self.respond_json({"error": "Invalid upstream TLS setting"}, 400)
+
+        STATE_CONFIG.parent.mkdir(parents=True, exist_ok=True)
+        temporary = None
+        try:
+            with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=STATE_CONFIG.parent,
+                                             prefix=".settings-", delete=False) as target:
+                temporary = Path(target.name)
+                os.fchmod(target.fileno(), 0o600)
+                json.dump(settings, target)
+                target.write("\n")
+            temporary.replace(STATE_CONFIG)
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
+        self.respond_json(settings)
 
 
 class UnixHTTPServer(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):

@@ -2,14 +2,18 @@
 
 import importlib.util
 import json
+import sys
+import tempfile
 import threading
 import unittest
 from http.server import HTTPServer
 from pathlib import Path
-from urllib.request import urlopen
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
 
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "scripts"))
 spec = importlib.util.spec_from_file_location("mitm_tester_api", ROOT / "scripts" / "api.py")
 plugin_api = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(plugin_api)
@@ -43,6 +47,31 @@ class SinkContractTest(unittest.TestCase):
         self.assertEqual(sink["Iface"], plugin["NetworkCapabilities"]["Interface"])
         self.assertEqual(sink["IP"], "172.30.120.2")
         self.assertTrue(sink["Online"])
+
+    def test_upstream_tls_setting_is_validated_and_saved(self):
+        with tempfile.TemporaryDirectory() as directory:
+            original = plugin_api.STATE_CONFIG
+            plugin_api.STATE_CONFIG = Path(directory) / "settings.json"
+            server = HTTPServer(("127.0.0.1", 0), plugin_api.Handler)
+            worker = threading.Thread(target=server.serve_forever, daemon=True)
+            worker.start()
+            try:
+                url = f"http://127.0.0.1:{server.server_port}/settings"
+                for body in (b'{"verify_upstream_tls":"false"}', b'{"verify_upstream_tls":false,"extra":1}'):
+                    with self.assertRaises(HTTPError) as response:
+                        urlopen(Request(url, data=body, method="PUT"), timeout=3)
+                    self.assertEqual(response.exception.code, 400)
+                    response.exception.close()
+                    self.assertFalse(plugin_api.STATE_CONFIG.exists())
+                with urlopen(Request(url, data=b'{"verify_upstream_tls":false}', method="PUT"), timeout=3) as response:
+                    self.assertEqual(json.load(response), {"verify_upstream_tls": False})
+                self.assertEqual(json.loads(plugin_api.STATE_CONFIG.read_text()), {"verify_upstream_tls": False})
+                self.assertEqual(plugin_api.STATE_CONFIG.stat().st_mode & 0o777, 0o600)
+            finally:
+                server.shutdown()
+                server.server_close()
+                worker.join(timeout=3)
+                plugin_api.STATE_CONFIG = original
 
 
 if __name__ == "__main__":

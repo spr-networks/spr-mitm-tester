@@ -1,12 +1,18 @@
 """Challenge every SNI connection and record bounded application data previews."""
 
 import base64
+import asyncio
 import json
+import logging
 import os
 from datetime import datetime, timezone
 from pathlib import Path
 
-EVENTS = Path(os.environ.get("MITM_TESTER_STATE_DIR", "/state/plugins/spr-mitm-tester")) / "events.jsonl"
+from mitmproxy import ctx
+
+STATE_DIR = Path(os.environ.get("MITM_TESTER_STATE_DIR", "/state/plugins/spr-mitm-tester"))
+EVENTS = STATE_DIR / "events.jsonl"
+SETTINGS = STATE_DIR / "settings.json"
 RUN_DIR = Path(os.environ.get("MITM_TESTER_RUN_DIR", "/run/mitm-tester"))
 MAX_BYTES = 2_000_000
 BODY_PREVIEW_BYTES = 8192
@@ -18,6 +24,35 @@ class MITMTesterProbe:
     def __init__(self):
         self.pending = {}
         self.authority = json.loads((RUN_DIR / "authority.json").read_text())
+        self.settings_task = None
+
+    def running(self):
+        # The active file is created by startup.sh; standalone addon tests omit it.
+        if (RUN_DIR / "upstream-tls.json").exists():
+            self.settings_task = asyncio.create_task(self.watch_settings())
+
+    def done(self):
+        if self.settings_task:
+            self.settings_task.cancel()
+
+    async def watch_settings(self):
+        while True:
+            try:
+                if SETTINGS.exists():
+                    settings = json.loads(SETTINGS.read_text())
+                    if (not isinstance(settings, dict) or set(settings) != {"verify_upstream_tls"}
+                            or not isinstance(settings["verify_upstream_tls"], bool)):
+                        raise ValueError("Invalid upstream TLS setting")
+                    verify = settings["verify_upstream_tls"]
+                    if ctx.options.ssl_insecure != (not verify):
+                        ctx.options.update(ssl_insecure=not verify)
+                        active = RUN_DIR / "upstream-tls.json"
+                        temporary = active.with_suffix(".tmp")
+                        temporary.write_text(json.dumps({"verify_upstream_tls": verify}) + "\n")
+                        temporary.replace(active)
+            except (OSError, ValueError) as error:
+                logging.warning("Could not apply upstream TLS setting: %s", error)
+            await asyncio.sleep(1)
 
     def emit(self, event):
         event.update(

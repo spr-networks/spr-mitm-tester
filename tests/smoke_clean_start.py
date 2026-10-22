@@ -23,6 +23,22 @@ while True:
 print(json.dumps(json.loads(b''.join(parts).split(b'\\r\\n\\r\\n', 1)[1])))
 """
 
+SOCKET_PUT = """\
+import json, socket, sys
+body = json.dumps({'verify_upstream_tls': sys.argv[1] == 'true'}).encode()
+s = socket.socket(socket.AF_UNIX)
+s.connect('/state/plugins/spr-mitm-tester/socket.sock')
+s.sendall(b'PUT /settings HTTP/1.1\\r\\nHost: plugin\\r\\nContent-Type: application/json\\r\\nContent-Length: ' + str(len(body)).encode() + b'\\r\\nConnection: close\\r\\n\\r\\n' + body)
+parts = []
+while True:
+    data = s.recv(65536)
+    if not data:
+        break
+    parts.append(data)
+response = b''.join(parts)
+assert b' 200 ' in response.split(b'\\r\\n', 1)[0], response
+"""
+
 MITMDUMP_OPTION = """\
 from pathlib import Path
 for path in Path('/proc').glob('[0-9]*/cmdline'):
@@ -60,6 +76,19 @@ def check_start(image, expected_verify, config_dir=None):
                     expected_option = f"ssl_insecure={'false' if expected_verify else 'true'}"
                     if option.stdout.strip() != expected_option:
                         raise AssertionError(f"mitmdump option: {option.stdout!r}")
+                    for desired in (not expected_verify, expected_verify):
+                        run("docker", "exec", container, "python3", "-c", SOCKET_PUT,
+                            str(desired).lower())
+                        apply_deadline = time.monotonic() + 10
+                        while time.monotonic() < apply_deadline:
+                            state = run("docker", "exec", container, "python3", "-c", SOCKET_CLIENT)
+                            current = json.loads(state.stdout)
+                            if (current.get("verify_upstream_tls") is desired and
+                                    current.get("configured_verify_upstream_tls") is desired):
+                                break
+                            time.sleep(0.5)
+                        else:
+                            raise AssertionError(f"setting did not apply live: {current!r}")
                     print(f"PASS: proxy ready with upstream verification {expected_verify}")
                     return
             time.sleep(1)

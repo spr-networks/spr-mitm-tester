@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import {
   api, Badge, BadgeText, Button, ButtonText, Card, HStack, Link, LinkText,
-  ListHeader, Page, SectionHeader, Text, VStack
+  ListHeader, Page, SectionHeader, Text, Toggle, VStack
 } from '@spr-networks/plugin-ui'
 import { summarizeChallenges } from './challenges.mjs'
 
@@ -27,6 +27,8 @@ export default function Plugin() {
   const [expandedRequest, setExpandedRequest] = useState(null)
   const [expandedData, setExpandedData] = useState(null)
   const [error, setError] = useState('')
+  const [settingsError, setSettingsError] = useState('')
+  const [savingSettings, setSavingSettings] = useState(false)
 
   useEffect(() => {
     let active = true
@@ -50,6 +52,21 @@ export default function Plugin() {
     const timer = setInterval(load, 5000)
     return () => { active = false; clearInterval(timer) }
   }, [])
+
+  const toggleUpstreamVerification = async () => {
+    if (savingSettings || typeof status?.configured_verify_upstream_tls !== 'boolean') return
+    const verify_upstream_tls = !status.configured_verify_upstream_tls
+    setSavingSettings(true)
+    setSettingsError('')
+    try {
+      await api.put(`${PLUGIN_BASE}/settings`, { verify_upstream_tls })
+      setStatus((current) => ({ ...current, configured_verify_upstream_tls: verify_upstream_tls }))
+    } catch (err) {
+      setSettingsError(`Could not save upstream TLS setting: ${err.message}`)
+    } finally {
+      setSavingSettings(false)
+    }
+  }
 
   const sink = topology?.Sinks?.find((item) => item.Iface === BRIDGE)
   const ready = Boolean(status?.ready && sink?.Online)
@@ -75,9 +92,21 @@ export default function Plugin() {
           <Text>Authority: {status?.authority
             ? `${status.authority.name} / ${status.authority.issued_by}`
             : 'No validated authority available; check container logs'}</Text>
-          <Text>Upstream TLS: {status?.verify_upstream_tls === false
-            ? 'Accept any server certificate'
-            : status?.verify_upstream_tls === true ? 'Verify server certificate' : 'Unknown'}</Text>
+          <HStack alignItems="center" justifyContent="space-between" space="md">
+            <VStack flex={1} space="xs">
+              <Text>Verify destination certificates</Text>
+              <Text size="sm">Turn off to accept any server certificate. Applies to new connections.</Text>
+            </VStack>
+            <Toggle
+              value={status?.configured_verify_upstream_tls !== false}
+              label="Verify destination certificates"
+              onPress={toggleUpstreamVerification}
+              disabled={savingSettings || typeof status?.configured_verify_upstream_tls !== 'boolean'}
+            />
+          </HStack>
+          {status && status.verify_upstream_tls !== status.configured_verify_upstream_tls &&
+            <Text size="sm">Applying upstream TLS setting…</Text>}
+          {settingsError && <Text color="$red600">{settingsError}</Text>}
           <Text>Select mitm-tester as a route destination in Topology.</Text>
           <Link isExternal href="https://192.168.2.1/admin/topology">
             <LinkText>Open Topology</LinkText>

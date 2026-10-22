@@ -73,13 +73,15 @@ For the current SUPER host-firewall behavior observed with this KVM sink, see th
 
 By default, mitmproxy verifies destination server certificates against the system roots and the pinned [Root YR cross-sign by ISRG Root X1](https://letsencrypt.org/certificates/). If a device uses a destination with a private or untrusted CA, the connection row shows the upstream TLS failure.
 
-To allow any destination certificate during a test, create `configs/plugins/spr-mitm-tester/settings.json` on the SPR host with:
+To allow any destination certificate during a test, turn off **Verify destination certificates** in the plugin UI. The choice is saved in `state/plugins/spr-mitm-tester/settings.json` and applies to new connections without restarting the plugin. Turn the switch back on to restore verification.
+
+For a file-based initial setting, create `configs/plugins/spr-mitm-tester/settings.json` on the SPR host with:
 
 ```json
 {"verify_upstream_tls": false}
 ```
 
-Restart the plugin after changing the file. The startup script then passes `ssl_insecure=true` to mitmproxy, and the plugin UI reports **Upstream TLS: Accept any server certificate**. To restore verification, remove the file or set the value to `true`, then restart. This setting controls only the proxy's connection to destination servers; it does not change the forged eMudhra certificate shown to devices. While it is `false`, the proxy does not authenticate destination servers.
+Restart the plugin after changing that initial setting. A UI choice takes precedence over the file-based setting. This setting controls only the proxy's connection to destination servers; it does not change the forged eMudhra certificate shown to devices. While it is `false`, the proxy does not authenticate destination servers.
 
 At startup the plugin copies its probe addon into `/run/mitm-tester` before launching mitmproxy. The reproducible build normalizes image file timestamps to epoch 0, which mitmproxy's script watcher does not load; the runtime copy gives it a current timestamp so challenge and request events are recorded.
 

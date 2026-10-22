@@ -10,6 +10,21 @@ SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "configure_upstream_t
 
 
 class UpstreamTLSConfigTest(unittest.TestCase):
+    def test_ui_setting_overrides_file_based_initial_setting(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory) / "state.json"
+            fallback = Path(directory) / "legacy.json"
+            output = Path(directory) / "active.json"
+            fallback.write_text('{"verify_upstream_tls": false}')
+            state.write_text('{"verify_upstream_tls": true}')
+            result = subprocess.run(
+                [sys.executable, str(SCRIPT), "--config", str(state),
+                 "--fallback", str(fallback), "--output", str(output)],
+                check=True, capture_output=True, text=True,
+            )
+            self.assertEqual(result.stdout.strip(), "ssl_insecure=false")
+            self.assertEqual(json.loads(output.read_text()), {"verify_upstream_tls": True})
+
     def test_default_and_optional_insecure_mode(self):
         with tempfile.TemporaryDirectory() as directory:
             config = Path(directory) / "settings.json"
