@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate the persistent upstream TLS setting and write the active mode."""
+"""Validate persistent proxy settings and write the active mode."""
 
 import argparse
 import json
@@ -9,26 +9,34 @@ STATE_CONFIG = Path("/state/plugins/spr-mitm-tester/settings.json")
 LEGACY_CONFIG = Path("/configs/spr-mitm-tester/settings.json")
 
 
-def verify_upstream_tls(config_path):
+DEFAULTS = {"verify_upstream_tls": True, "emudhra_old": False}
+
+
+def load_settings(config_path):
     if not config_path.exists():
-        return True
+        return dict(DEFAULTS)
     settings = json.loads(config_path.read_text())
-    if not isinstance(settings, dict) or set(settings) != {"verify_upstream_tls"}:
-        raise ValueError('settings.json must contain only "verify_upstream_tls"')
-    value = settings["verify_upstream_tls"]
-    if not isinstance(value, bool):
-        raise ValueError('"verify_upstream_tls" must be true or false')
-    return value
+    if not isinstance(settings, dict) or not settings or set(settings) - set(DEFAULTS):
+        raise ValueError("settings.json has unknown or missing settings")
+    if any(not isinstance(value, bool) for value in settings.values()):
+        raise ValueError("settings.json values must be true or false")
+    return {**DEFAULTS, **settings}
+
+
+def configured_settings(config_path=STATE_CONFIG, fallback_path=LEGACY_CONFIG):
+    return load_settings(config_path if config_path.exists() else fallback_path)
 
 
 def configured_verify_upstream_tls(config_path=STATE_CONFIG, fallback_path=LEGACY_CONFIG):
-    return verify_upstream_tls(config_path if config_path.exists() else fallback_path)
+    return configured_settings(config_path, fallback_path)["verify_upstream_tls"]
 
 
 def configure(config_path, output_path, fallback_path=None):
-    verify = configured_verify_upstream_tls(config_path, fallback_path or config_path)
-    output_path.write_text(json.dumps({"verify_upstream_tls": verify}) + "\n")
-    return f"ssl_insecure={'false' if verify else 'true'}"
+    settings = configured_settings(config_path, fallback_path or config_path)
+    output_path.write_text(json.dumps(settings) + "\n")
+    verify = settings["verify_upstream_tls"]
+    emudhra_option = "--emudhra-old" if settings["emudhra_old"] else "--emudhra"
+    return f"ssl_insecure={'false' if verify else 'true'} {emudhra_option}"
 
 
 if __name__ == "__main__":

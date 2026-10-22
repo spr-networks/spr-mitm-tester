@@ -20,12 +20,12 @@ from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.x509.oid import NameOID
+from mitmproxy.certs import EMUDHRA_CHAIN_PEM
 
 
 HOSTNAME = "www.whatever.com"
 PLUGIN = Path("/plugin")
 SCRATCH = Path("/scratch")
-KEY = Path("/fixture/authority.key")
 REQUEST_BODY = (
     b"\xff" + b"x" * 10000 if os.environ.get("TEST_BINARY") == "1"
     else json.dumps({"device": "sensor-7", "payload": "x" * 10000}).encode()
@@ -191,34 +191,26 @@ def main():
     SCRATCH.mkdir(exist_ok=True)
     assert any(item[4][0] == "127.0.0.1" for item in socket.getaddrinfo(HOSTNAME, None))
     packaged = os.environ.get("TEST_PACKAGED") == "1"
-    issuer = os.environ.get("TEST_ISSUER", "emsign")
-    assert issuer in ("emsign", "aaa")
+    mode = os.environ.get("TEST_CHAIN_MODE", "modern")
+    assert mode in ("modern", "old")
     trust = os.environ.get("TEST_TRUST", "root")
     assert trust in ("root", "intermediate")
-    if packaged:
-        assert issuer == "emsign", "the packaged image includes only the emSign example"
-        scripts_dir = Path("/scripts")
-        cert_file = scripts_dir / "example-authority.crt"
-        root_file = scripts_dir / "roots" / "emsign-root-tls-g3.pem"
-        key_file = scripts_dir / "example-authority.key"
-    else:
-        scripts_dir = PLUGIN / "scripts"
-        cert_file = PLUGIN / "data" / "certs" / f"em-ov-tls-ca-g3c-{issuer}.pem"
-        root_file = PLUGIN / "data" / "roots" / (
-            "emsign-root-tls-g3.pem" if issuer == "emsign" else "aaa-certificate-services.pem"
-        )
-        key_file = KEY
-    intermediate = x509.load_pem_x509_certificate(cert_file.read_bytes())
+    scripts_dir = Path("/scripts") if packaged else PLUGIN / "scripts"
+    certs = x509.load_pem_x509_certificates(EMUDHRA_CHAIN_PEM)
+    assert len(certs) == 3
+    intermediate = certs[-1] if mode == "old" else certs[0]
+    cert_file = SCRATCH / "selected-intermediate.crt"
+    cert_file.write_bytes(intermediate.public_bytes(serialization.Encoding.PEM))
+    root_file = PLUGIN / "tests" / "fixtures" / "roots" / (
+        "aaa-certificate-services.pem" if mode == "old" else "emsign-root-tls-g3.pem"
+    )
     run_dir = SCRATCH / "mitm"
     run_dir.mkdir()
-    subprocess.run(
-        [sys.executable, str(scripts_dir / "prepare_authority.py"),
-         "--cert", str(cert_file), "--key", str(key_file),
-         "--catalogue", str(scripts_dir / "affected-tls.json") if packaged else str(PLUGIN / "data" / "affected-tls.json"),
-         "--roots-dir", str(scripts_dir / "roots") if packaged else str(PLUGIN / "data" / "roots"),
-         "--output", str(run_dir)],
-        check=True,
-    )
+    live_switch = os.environ.get("TEST_LIVE_SWITCH") == "1"
+    if live_switch:
+        (run_dir / "upstream-tls.json").write_text(
+            json.dumps({"verify_upstream_tls": False, "emudhra_old": False}) + "\n"
+        )
     make_upstream_certificate()
     server = QuietHTTPServer(("127.0.0.1", 0), UpstreamHandler)
     upstream_port = server.server_address[1]
@@ -238,7 +230,8 @@ def main():
     if packaged:
         probe_script = run_dir / "probe.py"
         shutil.copyfile(scripts_dir / "probe.py", probe_script)
-    env = dict(os.environ, MITM_TESTER_RUN_DIR=str(run_dir), MITM_TESTER_STATE_DIR=str(SCRATCH))
+    env = dict(os.environ, MITM_TESTER_RUN_DIR=str(run_dir), MITM_TESTER_STATE_DIR=str(SCRATCH),
+               PYTHONPATH=str(scripts_dir))
     verify_upstream = os.environ.get("TEST_VERIFY_UPSTREAM") == "1"
     proxy_binary = os.environ.get("MITM_TESTER_PROXY_BINARY", "mitmdump")
     assert proxy_binary in ("mitmdump", "mitmweb")
@@ -249,6 +242,7 @@ def main():
         proxy_args += ["--set", "web_host=127.0.0.1", "--set", f"web_port={free_port()}",
                        "--set", "web_open_browser=false", "--set", "web_password=test-token"]
     logfile = SCRATCH / "proxy.log"
+    proxy_args.append("--emudhra-old" if mode == "old" else "--emudhra")
     try:
         with logfile.open("wb") as log:
             proxy = subprocess.Popen(
@@ -304,6 +298,7 @@ def main():
                             and event.get("sni") == HOSTNAME
                             and event.get("client_ip") == "127.0.0.1"
                             and event.get("authority") == "EM OV TLS CA - G3C"
+                            and event.get("issuer") == intermediate.issuer.get_attributes_for_oid(NameOID.COMMON_NAME)[0].value
                         ]
                         requests = [event for event in events if event.get("result") == "request"]
                         request_headers = [event for event in events if event.get("result") == "request_headers"]
@@ -354,7 +349,7 @@ def main():
                     time.sleep(0.1)
                 else:
                     raise AssertionError("TLS-only connection did not record its close")
-                if issuer == "emsign" and trust == "root":
+                if mode == "modern" and trust == "root":
                     send_websocket_message(proxy_port, upstream_port, trust_file, False)
                     send_raw_tcp_message(proxy_port, raw_port, trust_file, False)
                     deadline = time.monotonic() + 5
@@ -384,9 +379,31 @@ def main():
                     assert len({event["connection_id"] for event in websocket_data}) == 1
                     assert len({event["connection_id"] for event in tcp_data}) == 1
                     assert websocket_data[0]["connection_id"] != tcp_data[0]["connection_id"]
+                if live_switch:
+                    (SCRATCH / "settings.json").write_text(
+                        json.dumps({"verify_upstream_tls": False, "emudhra_old": True}) + "\n"
+                    )
+                    deadline = time.monotonic() + 5
+                    while time.monotonic() < deadline:
+                        active = json.loads((run_dir / "upstream-tls.json").read_text())
+                        if active["emudhra_old"]:
+                            break
+                        time.sleep(0.1)
+                    else:
+                        raise AssertionError("legacy chain did not apply live")
+                    legacy = certs[-1]
+                    legacy_root = PLUGIN / "tests" / "fixtures" / "roots" / "aaa-certificate-services.pem"
+                    switched_leaf = connect_through_proxy(
+                        proxy_port, upstream_port, legacy_root, False
+                    )
+                    assert switched_leaf.issuer == legacy.subject
+                    events = [json.loads(line) for line in events_file.read_text().splitlines()]
+                    assert any(event.get("result") == "handshake_completed" and
+                               event.get("issuer") == "AAA Certificate Services"
+                               for event in events), events
                 assert (events_file.stat().st_mode & 0o777) == 0o600
                 print(f"PASS: {HOSTNAME} leaf signed by {intermediate.subject.rfc4514_string()} "
-                      f"({issuer}, client trusts {trust})")
+                      f"({mode}, client trusts {trust})")
             finally:
                 proxy.terminate()
                 try:

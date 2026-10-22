@@ -57,15 +57,22 @@ class SinkContractTest(unittest.TestCase):
             worker.start()
             try:
                 url = f"http://127.0.0.1:{server.server_port}/settings"
-                for body in (b'{"verify_upstream_tls":"false"}', b'{"verify_upstream_tls":false,"extra":1}'):
+                for body in (b'{"verify_upstream_tls":"false"}',
+                             b'{"emudhra_old":"true"}',
+                             b'{"verify_upstream_tls":false,"extra":1}'):
                     with self.assertRaises(HTTPError) as response:
                         urlopen(Request(url, data=body, method="PUT"), timeout=3)
                     self.assertEqual(response.exception.code, 400)
                     response.exception.close()
                     self.assertFalse(plugin_api.STATE_CONFIG.exists())
                 with urlopen(Request(url, data=b'{"verify_upstream_tls":false}', method="PUT"), timeout=3) as response:
-                    self.assertEqual(json.load(response), {"verify_upstream_tls": False})
-                self.assertEqual(json.loads(plugin_api.STATE_CONFIG.read_text()), {"verify_upstream_tls": False})
+                    self.assertEqual(json.load(response),
+                                     {"verify_upstream_tls": False, "emudhra_old": False})
+                with urlopen(Request(url, data=b'{"emudhra_old":true}', method="PUT"), timeout=3) as response:
+                    self.assertEqual(json.load(response),
+                                     {"verify_upstream_tls": False, "emudhra_old": True})
+                self.assertEqual(json.loads(plugin_api.STATE_CONFIG.read_text()),
+                                 {"verify_upstream_tls": False, "emudhra_old": True})
                 self.assertEqual(plugin_api.STATE_CONFIG.stat().st_mode & 0o777, 0o600)
             finally:
                 server.shutdown()

@@ -2,32 +2,18 @@
 set -eu
 
 AUDIT_INTERFACE="${AUDIT_INTERFACE:-eth0}"
+export PYTHONPATH="/scripts${PYTHONPATH:+:$PYTHONPATH}"
 case "$AUDIT_INTERFACE" in
   *[!a-zA-Z0-9_.:-]*|'') echo "Invalid AUDIT_INTERFACE" >&2; exit 1 ;;
 esac
 ip link set dev "$AUDIT_INTERFACE" mtu 1400
 mkdir -p /state/plugins/spr-mitm-tester /run/mitm-tester
-mitm_ssl_option=$(python3 /scripts/configure_upstream_tls.py)
+proxy_settings=$(python3 /scripts/configure_upstream_tls.py)
+mitm_ssl_option=${proxy_settings%% *}
+emudhra_option=${proxy_settings#* }
 python3 /scripts/api.py &
 api_pid=$!
 trap 'kill "$api_pid" 2>/dev/null || true' EXIT INT TERM
-
-authority_cert=/configs/spr-mitm-tester/authority.crt
-authority_key=/configs/spr-mitm-tester/authority.key
-if [ ! -e "$authority_cert" ] && [ ! -e "$authority_key" ]; then
-  authority_cert=/scripts/example-authority.crt
-  authority_key=/scripts/example-authority.key
-  echo "Using the pinned public eMudhra G3C example authority" >&2
-fi
-
-if ! python3 /scripts/prepare_authority.py \
-  --cert "$authority_cert" \
-  --key "$authority_key" \
-  --output /run/mitm-tester; then
-  echo "No validated eMudhra TLS authority. Plugin API remains available; interception is disabled." >&2
-  wait "$api_pid"
-  exit 1
-fi
 
 # Buildx normalizes image file mtimes to epoch 0. Mitmproxy's script watcher
 # only loads a script when its mtime is greater than 0, so stage it in tmpfs.
@@ -65,6 +51,7 @@ table inet mitm_tester {
 EOF
 
 mitmweb --mode transparent --listen-host 0.0.0.0 --listen-port 9999 \
+  "$emudhra_option" \
   --set web_host=0.0.0.0 --set web_port=8081 --set web_open_browser=false \
   --set "web_password=$web_token" \
   --set confdir=/run/mitm-tester --set connection_strategy=eager \

@@ -22,18 +22,20 @@ class UpstreamTLSConfigTest(unittest.TestCase):
                  "--fallback", str(fallback), "--output", str(output)],
                 check=True, capture_output=True, text=True,
             )
-            self.assertEqual(result.stdout.strip(), "ssl_insecure=false")
-            self.assertEqual(json.loads(output.read_text()), {"verify_upstream_tls": True})
+            self.assertEqual(result.stdout.strip(), "ssl_insecure=false --emudhra")
+            self.assertEqual(json.loads(output.read_text()),
+                             {"verify_upstream_tls": True, "emudhra_old": False})
 
     def test_default_and_optional_insecure_mode(self):
         with tempfile.TemporaryDirectory() as directory:
             config = Path(directory) / "settings.json"
             output = Path(directory) / "active.json"
 
-            for contents, expected_option, expected_verify in (
-                (None, "ssl_insecure=false", True),
-                ('{"verify_upstream_tls": false}', "ssl_insecure=true", False),
-                ('{"verify_upstream_tls": true}', "ssl_insecure=false", True),
+            for contents, expected_option, expected_verify, expected_old in (
+                (None, "ssl_insecure=false --emudhra", True, False),
+                ('{"verify_upstream_tls": false}', "ssl_insecure=true --emudhra", False, False),
+                ('{"verify_upstream_tls": true}', "ssl_insecure=false --emudhra", True, False),
+                ('{"emudhra_old": true}', "ssl_insecure=false --emudhra-old", True, True),
             ):
                 if contents is None:
                     config.unlink(missing_ok=True)
@@ -45,19 +47,22 @@ class UpstreamTLSConfigTest(unittest.TestCase):
                 )
                 self.assertEqual(result.stdout.strip(), expected_option)
                 self.assertEqual(json.loads(output.read_text()),
-                                 {"verify_upstream_tls": expected_verify})
+                                 {"verify_upstream_tls": expected_verify,
+                                  "emudhra_old": expected_old})
 
     def test_rejects_invalid_mode(self):
         with tempfile.TemporaryDirectory() as directory:
             config = Path(directory) / "settings.json"
             output = Path(directory) / "active.json"
-            config.write_text('{"verify_upstream_tls": "false"}')
-            result = subprocess.run(
-                [sys.executable, str(SCRIPT), "--config", str(config), "--output", str(output)],
-                capture_output=True, text=True,
-            )
-            self.assertNotEqual(result.returncode, 0)
-            self.assertFalse(output.exists())
+            for contents in ('{"verify_upstream_tls": "false"}',
+                             '{"emudhra_old": "true"}', '{"unexpected": true}'):
+                config.write_text(contents)
+                result = subprocess.run(
+                    [sys.executable, str(SCRIPT), "--config", str(config), "--output", str(output)],
+                    capture_output=True, text=True,
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse(output.exists())
 
 
 if __name__ == "__main__":

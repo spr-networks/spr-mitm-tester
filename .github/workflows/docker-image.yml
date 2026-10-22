@@ -22,9 +22,8 @@ jobs:
       - name: Validate plugin and Compose files
         run: |
           python3 -m json.tool plugin.json >/dev/null
-          python3 -m json.tool data/affected-tls.json >/dev/null
           python3 -m compileall -q scripts tests
-          bash -n build_docker_compose.sh update-pins.sh scripts/startup.sh scripts/fetch-example-authority.sh
+          bash -n build_docker_compose.sh update-pins.sh scripts/startup.sh
           SUPERDIR=/tmp/ docker compose -f docker-compose.yml config --quiet
           SUPERDIR=/tmp/ docker compose -f docker-compose-kvm.yml config --quiet
       - name: Test forged certificate acceptance
@@ -113,7 +112,7 @@ jobs:
             --set "*.tags=ghcr.io/spr-networks/spr-mitm-tester:sha-${GITHUB_SHA}" \
             --set "*.labels.org.supernetworks.version=${RELEASE_VERSION}" \
             --push
-      - name: Verify clean install starts without authority config
+      - name: Verify clean install and live settings
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: python3 tests/smoke_clean_start.py "ghcr.io/spr-networks/spr-mitm-tester:sha-${GITHUB_SHA}"
       - name: Test published request recording

@@ -10,6 +10,9 @@ from pathlib import Path
 
 from mitmproxy import ctx
 
+from configure_upstream_tls import load_settings
+from emudhra_authority import authority_details
+
 STATE_DIR = Path(os.environ.get("MITM_TESTER_STATE_DIR", "/state/plugins/spr-mitm-tester"))
 EVENTS = STATE_DIR / "events.jsonl"
 SETTINGS = STATE_DIR / "settings.json"
@@ -24,7 +27,6 @@ class MITMTesterProbe:
     def __init__(self):
         self.pending = {}
         self.completed = set()
-        self.authority = json.loads((RUN_DIR / "authority.json").read_text())
         self.settings_task = None
 
     def running(self):
@@ -40,26 +42,26 @@ class MITMTesterProbe:
         while True:
             try:
                 if SETTINGS.exists():
-                    settings = json.loads(SETTINGS.read_text())
-                    if (not isinstance(settings, dict) or set(settings) != {"verify_upstream_tls"}
-                            or not isinstance(settings["verify_upstream_tls"], bool)):
-                        raise ValueError("Invalid upstream TLS setting")
+                    settings = load_settings(SETTINGS)
                     verify = settings["verify_upstream_tls"]
-                    if ctx.options.ssl_insecure != (not verify):
-                        ctx.options.update(ssl_insecure=not verify)
+                    old = settings["emudhra_old"]
+                    if ctx.options.ssl_insecure != (not verify) or ctx.options.emudhra_old != old:
+                        ctx.options.update(ssl_insecure=not verify,
+                                           emudhra=not old, emudhra_old=old)
                         active = RUN_DIR / "upstream-tls.json"
                         temporary = active.with_suffix(".tmp")
-                        temporary.write_text(json.dumps({"verify_upstream_tls": verify}) + "\n")
+                        temporary.write_text(json.dumps(settings) + "\n")
                         temporary.replace(active)
             except (OSError, ValueError) as error:
-                logging.warning("Could not apply upstream TLS setting: %s", error)
+                logging.warning("Could not apply proxy settings: %s", error)
             await asyncio.sleep(1)
 
     def emit(self, event):
+        authority = authority_details(ctx.options.emudhra_old)
         event.update(
             time=datetime.now(timezone.utc).isoformat(),
-            authority=self.authority["name"],
-            issuer=self.authority["issued_by"],
+            authority=authority["name"],
+            issuer=authority["issued_by"],
         )
         EVENTS.parent.mkdir(parents=True, exist_ok=True)
         # Requests may contain credentials, so keep the bounded local log private.

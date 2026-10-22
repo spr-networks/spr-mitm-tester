@@ -25,7 +25,7 @@ print(json.dumps(json.loads(b''.join(parts).split(b'\\r\\n\\r\\n', 1)[1])))
 
 SOCKET_PUT = """\
 import json, socket, sys
-body = json.dumps({'verify_upstream_tls': sys.argv[1] == 'true'}).encode()
+body = json.dumps({sys.argv[1]: sys.argv[2] == 'true'}).encode()
 s = socket.socket(socket.AF_UNIX)
 s.connect('/state/plugins/spr-mitm-tester/socket.sock')
 s.sendall(b'PUT /settings HTTP/1.1\\r\\nHost: plugin\\r\\nContent-Type: application/json\\r\\nContent-Length: ' + str(len(body)).encode() + b'\\r\\nConnection: close\\r\\n\\r\\n' + body)
@@ -44,7 +44,9 @@ from pathlib import Path
 for path in Path('/proc').glob('[0-9]*/cmdline'):
     args = path.read_bytes().split(b'\\0')
     if any(b'mitmweb' in arg for arg in args[:2]):
-        print(next(arg.decode() for arg in args if arg.startswith(b'ssl_insecure=')))
+        ssl = next(arg.decode() for arg in args if arg.startswith(b'ssl_insecure='))
+        mode = next(arg.decode() for arg in args if arg in (b'--emudhra', b'--emudhra-old'))
+        print(ssl + ' ' + mode)
         break
 """
 
@@ -78,7 +80,7 @@ def run(*args, check=True):
     return subprocess.run(args, check=check, capture_output=True, text=True)
 
 
-def check_start(image, expected_verify, config_dir=None):
+def check_start(image, expected_verify, expected_old=False, config_dir=None):
     command = [
         "docker", "run", "-d", "--cap-add", "NET_ADMIN",
         "--tmpfs", "/run/mitm-tester:mode=0700",
@@ -96,18 +98,22 @@ def check_start(image, expected_verify, config_dir=None):
                 status = json.loads(response.stdout)
                 if (status.get("ready") and
                         status.get("authority", {}).get("name") == "EM OV TLS CA - G3C" and
+                        status.get("authority", {}).get("issued_by") ==
+                        ("AAA Certificate Services" if expected_old else "emSign Root TLS CA - G3") and
                         status.get("verify_upstream_tls") is expected_verify and
+                        status.get("emudhra_old") is expected_old and
                         status.get("mitmweb", {}).get("ready")):
                     assert len(status["mitmweb"]["token"]) >= 32
                     run("docker", "exec", container, "python3", "-c", MITMWEB_CHECK)
                     run("docker", "exec", container, "python3", "-c", WEB_FIREWALL_CHECK)
                     option = run("docker", "exec", container, "python3", "-c", MITMWEB_OPTION)
-                    expected_option = f"ssl_insecure={'false' if expected_verify else 'true'}"
+                    expected_option = (f"ssl_insecure={'false' if expected_verify else 'true'} "
+                                       f"{'--emudhra-old' if expected_old else '--emudhra'}")
                     if option.stdout.strip() != expected_option:
                         raise AssertionError(f"mitmweb option: {option.stdout!r}")
                     for desired in (not expected_verify, expected_verify):
                         run("docker", "exec", container, "python3", "-c", SOCKET_PUT,
-                            str(desired).lower())
+                            "verify_upstream_tls", str(desired).lower())
                         apply_deadline = time.monotonic() + 10
                         while time.monotonic() < apply_deadline:
                             state = run("docker", "exec", container, "python3", "-c", SOCKET_CLIENT)
@@ -118,7 +124,22 @@ def check_start(image, expected_verify, config_dir=None):
                             time.sleep(0.5)
                         else:
                             raise AssertionError(f"setting did not apply live: {current!r}")
-                    print(f"PASS: proxy ready with upstream verification {expected_verify}")
+                    for desired in (not expected_old, expected_old):
+                        run("docker", "exec", container, "python3", "-c", SOCKET_PUT,
+                            "emudhra_old", str(desired).lower())
+                        apply_deadline = time.monotonic() + 10
+                        while time.monotonic() < apply_deadline:
+                            state = run("docker", "exec", container, "python3", "-c", SOCKET_CLIENT)
+                            current = json.loads(state.stdout)
+                            if (current.get("emudhra_old") is desired and
+                                    current.get("configured_emudhra_old") is desired and
+                                    current.get("authority", {}).get("issued_by") ==
+                                    ("AAA Certificate Services" if desired else "emSign Root TLS CA - G3")):
+                                break
+                            time.sleep(0.5)
+                        else:
+                            raise AssertionError(f"chain setting did not apply live: {current!r}")
+                    print(f"PASS: proxy ready with upstream verification {expected_verify}, old chain {expected_old}")
                     return
             time.sleep(1)
         logs = run("docker", "logs", "--tail", "50", container, check=False)
@@ -130,8 +151,9 @@ def check_start(image, expected_verify, config_dir=None):
 def main(image):
     check_start(image, True)
     with tempfile.TemporaryDirectory() as directory:
-        (Path(directory) / "settings.json").write_text('{"verify_upstream_tls": false}\n')
-        check_start(image, False, directory)
+        (Path(directory) / "settings.json").write_text(
+            '{"verify_upstream_tls": false, "emudhra_old": true}\n')
+        check_start(image, False, True, directory)
 
 
 if __name__ == "__main__":

@@ -10,7 +10,7 @@ const BRIDGE = 'mitmtst0'
 
 const eventLabel = {
   attempted: 'Connecting',
-  handshake_completed: 'Certificate accepted',
+  handshake_completed: 'TLS handshake completed',
   handshake_failed: 'TLS handshake failed',
   disconnected_before_result: 'Disconnected before handshake'
 }
@@ -68,6 +68,21 @@ export default function Plugin() {
     }
   }
 
+  const toggleLegacyChain = async () => {
+    if (savingSettings || typeof status?.configured_emudhra_old !== 'boolean') return
+    const emudhra_old = !status.configured_emudhra_old
+    setSavingSettings(true)
+    setSettingsError('')
+    try {
+      await api.put(`${PLUGIN_BASE}/settings`, { emudhra_old })
+      setStatus((current) => ({ ...current, configured_emudhra_old: emudhra_old }))
+    } catch (err) {
+      setSettingsError(`Could not save eMudhra chain setting: ${err.message}`)
+    } finally {
+      setSavingSettings(false)
+    }
+  }
+
   const sink = topology?.Sinks?.find((item) => item.Iface === BRIDGE)
   const ready = Boolean(status?.ready && sink?.Online)
   const sprHost = typeof window === 'undefined' ? 'SPR_HOST' : window.location.hostname
@@ -107,8 +122,22 @@ export default function Plugin() {
               disabled={savingSettings || typeof status?.configured_verify_upstream_tls !== 'boolean'}
             />
           </HStack>
+          <HStack alignItems="center" justifyContent="space-between" space="md">
+            <VStack flex={1} space="xs">
+              <Text>Prefer legacy eMudhra chain</Text>
+              <Text size="sm">Send the AAA Certificate Services cross-sign first for older trust stores. Applies to new connections.</Text>
+            </VStack>
+            <Toggle
+              value={status?.configured_emudhra_old === true}
+              label="Prefer legacy eMudhra chain"
+              onPress={toggleLegacyChain}
+              disabled={savingSettings || typeof status?.configured_emudhra_old !== 'boolean'}
+            />
+          </HStack>
           {status && status.verify_upstream_tls !== status.configured_verify_upstream_tls &&
             <Text size="sm">Applying upstream TLS setting…</Text>}
+          {status && status.emudhra_old !== status.configured_emudhra_old &&
+            <Text size="sm">Applying eMudhra chain setting…</Text>}
           {settingsError && <Text color="$red600">{settingsError}</Text>}
           <Text>Select mitm-tester as a route destination in Topology.</Text>
           <Link isExternal href="https://192.168.2.1/admin/topology">
@@ -127,7 +156,6 @@ export default function Plugin() {
           {status?.mitmweb?.ready && webUrl
             ? <Link isExternal href={webUrl}><LinkText>Open mitmproxy</LinkText></Link>
             : <Text size="sm">mitmproxy flow view is starting or unavailable.</Text>}
-          <Text size="sm">For a TLS host with no HTTP flow, set tcp_hosts for that SNI in mitmproxy Options to inspect decrypted TCP bytes on new connections.</Text>
         </VStack>
       </Card>
       <Card>

@@ -10,8 +10,9 @@ PLUGIN = Path(__file__).resolve().parents[1]
 
 
 def main(image):
-    subprocess.run(
-        [
+    for mode in ("modern", "old"):
+        subprocess.run(
+            [
             "docker", "run", "--rm", "--network", "none",
             "--add-host", "www.whatever.com:127.0.0.1",
             "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
@@ -20,11 +21,12 @@ def main(image):
             "--mount", f"type=bind,src={PLUGIN},dst=/plugin,readonly",
             "-e", "HOME=/scratch", "-e", "TMPDIR=/scratch",
             "-e", "PYTHONDONTWRITEBYTECODE=1", "-e", "TEST_PACKAGED=1",
+            "-e", f"TEST_CHAIN_MODE={mode}",
             "-e", "MITM_TESTER_PROXY_BINARY=mitmweb",
             "--entrypoint", "python3", image, "/plugin/tests/mitm_acceptance.py",
-        ],
-        check=True,
-    )
+            ],
+            check=True,
+        )
 
 
 if __name__ == "__main__":

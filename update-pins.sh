@@ -7,7 +7,8 @@ digest() { docker buildx imagetools inspect "$1" --format '{{.Manifest.Digest}}'
 node_ref="node:18@$(digest node:18)"
 syntax_ref="docker/dockerfile:1@$(digest docker/dockerfile:1)"
 buildkit_ref="moby/buildkit:buildx-stable-1@$(digest moby/buildkit:buildx-stable-1)"
-mitmproxy_ref="mitmproxy/mitmproxy@$(digest mitmproxy/mitmproxy:latest)"
+mitmproxy_tag="${MITMPROXY_TAG:-12.3.0}"
+mitmproxy_ref="mitmproxy/mitmproxy@$(digest "mitmproxy/mitmproxy:${mitmproxy_tag}")"
 krun_ref="ghcr.io/spr-networks/spr-krun-plugin@$(digest ghcr.io/spr-networks/spr-krun-plugin:latest)"
 snapshot="${DEBIAN_SNAPSHOT:-$(sed -n 's/^DEBIAN_SNAPSHOT=//p' reproducible.env)}"
 
