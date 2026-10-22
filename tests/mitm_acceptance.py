@@ -69,6 +69,14 @@ class UpstreamHandler(BaseHTTPRequestHandler):
         pass
 
 
+class QuietHTTPServer(HTTPServer):
+    def handle_error(self, request, client_address):
+        # A TLS-only client intentionally closes before an HTTP request.
+        if isinstance(sys.exc_info()[1], BrokenPipeError):
+            return
+        super().handle_error(request, client_address)
+
+
 class RawEchoHandler(socketserver.BaseRequestHandler):
     def handle(self):
         payload = self.request.recv(8192)
@@ -212,7 +220,7 @@ def main():
         check=True,
     )
     make_upstream_certificate()
-    server = HTTPServer(("127.0.0.1", 0), UpstreamHandler)
+    server = QuietHTTPServer(("127.0.0.1", 0), UpstreamHandler)
     upstream_port = server.server_address[1]
     upstream_tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     upstream_tls.load_cert_chain(str(SCRATCH / "upstream.crt"), str(SCRATCH / "upstream.key"))
@@ -290,8 +298,11 @@ def main():
                             and event.get("authority") == "EM OV TLS CA - G3C"
                         ]
                         requests = [event for event in events if event.get("result") == "request"]
+                        request_headers = [event for event in events if event.get("result") == "request_headers"]
                         responses = [event for event in events if event.get("result") == "upstream_response"]
-                        if len(completed) >= 2 and len(requests) >= 2 and len(responses) >= 2:
+                        upstream_tls = [event for event in events if event.get("result") == "upstream_tls_completed"]
+                        if (len(completed) >= 2 and len(request_headers) >= 2
+                                and len(requests) >= 2 and len(responses) >= 2 and len(upstream_tls) >= 2):
                             break
                     time.sleep(0.1)
                 else:
@@ -299,6 +310,9 @@ def main():
                 connection_ids = {event["connection_id"] for event in completed}
                 assert len(connection_ids) == 2, completed
                 assert {event["connection_id"] for event in requests} == connection_ids, requests
+                assert {event["request_id"] for event in request_headers} == {
+                    event["request_id"] for event in requests
+                }, request_headers
                 assert {event["connection_id"] for event in responses} == connection_ids, responses
                 assert {event["request_id"] for event in responses} == {event["request_id"] for event in requests}
                 assert all(event["status_code"] == 200 for event in responses), responses
@@ -315,6 +329,23 @@ def main():
                     assert request["body_preview"] == expected_preview, request
                     assert request["body_encoding"] == expected_encoding, request
                     assert request["body_truncated"] is True, request
+                with tls_client_through_proxy(proxy_port, upstream_port, trust_file, trust == "intermediate"):
+                    pass
+                deadline = time.monotonic() + 5
+                while time.monotonic() < deadline:
+                    events = [json.loads(line) for line in events_file.read_text().splitlines()]
+                    closed_without_request = [event for event in events if
+                        event.get("result") == "connection_closed"
+                        and event.get("connection_id") not in connection_ids
+                        and not any(item.get("result") in ("request_headers", "request")
+                                    and item.get("connection_id") == event.get("connection_id")
+                                    for item in events)
+                    ]
+                    if closed_without_request:
+                        break
+                    time.sleep(0.1)
+                else:
+                    raise AssertionError("TLS-only connection did not record its close")
                 if issuer == "emsign" and trust == "root":
                     send_websocket_message(proxy_port, upstream_port, trust_file, False)
                     send_raw_tcp_message(proxy_port, raw_port, trust_file, False)

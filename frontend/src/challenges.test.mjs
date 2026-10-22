@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { summarizeChallenges } from './challenges.mjs'
+import { summarizeChallenges, summarizeRequests } from './challenges.mjs'
 
 test('one row per connection shows TLS, request, and response separately', () => {
   const events = [
@@ -63,4 +63,34 @@ test('upstream TLS failure is shown on the matching accepted client connection',
   assert.equal(rows.length, 1)
   assert.equal(rows[0].result, 'handshake_completed')
   assert.equal(rows[0].upstreamError, 'certificate verify failed')
+})
+
+test('header-only and interrupted requests remain visible without double-counting', () => {
+  const events = [
+    { connection_id: 'one', result: 'attempted', client_ip: '192.0.2.8', sni: 'diag.meethue.com', time: '2026-10-21T01:00:00Z' },
+    { connection_id: 'one', result: 'upstream_tls_completed', time: '2026-10-21T01:00:01Z' },
+    { connection_id: 'one', result: 'handshake_completed', time: '2026-10-21T01:00:02Z' },
+    { connection_id: 'one', result: 'request_headers', request_id: 'r1', method: 'POST', url: 'https://diag.meethue.com/', time: '2026-10-21T01:00:03Z' },
+    { connection_id: 'one', result: 'request_incomplete', request_id: 'r1', detail: 'connection closed', time: '2026-10-21T01:00:04Z' },
+    { connection_id: 'one', result: 'connection_closed', time: '2026-10-21T01:00:05Z' }
+  ]
+  const row = summarizeChallenges(events)[0]
+  assert.equal(row.requestCount, 1)
+  assert.equal(row.completedRequestCount, 0)
+  assert.equal(row.upstreamTls, true)
+  assert.equal(row.closed, true)
+  assert.equal(row.protocolError, 'connection closed')
+  assert.equal(summarizeRequests(events)[0].result, 'request_incomplete')
+})
+
+test('completed request replaces its headers preview', () => {
+  const events = [
+    { connection_id: 'one', result: 'handshake_completed', client_ip: '192.0.2.8', sni: 'example.com', time: '2026-10-21T01:00:00Z' },
+    { connection_id: 'one', result: 'request_headers', request_id: 'r1', time: '2026-10-21T01:00:01Z' },
+    { connection_id: 'one', result: 'request', request_id: 'r1', body_bytes: 15, time: '2026-10-21T01:00:02Z' }
+  ]
+  const row = summarizeChallenges(events)[0]
+  assert.equal(row.requestCount, 1)
+  assert.equal(row.completedRequestCount, 1)
+  assert.equal(summarizeRequests(events)[0].result, 'request')
 })

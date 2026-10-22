@@ -3,7 +3,7 @@ import {
   api, Badge, BadgeText, Button, ButtonText, Card, HStack, Link, LinkText,
   ListHeader, Page, SectionHeader, Text, Toggle, VStack
 } from '@spr-networks/plugin-ui'
-import { summarizeChallenges } from './challenges.mjs'
+import { summarizeChallenges, summarizeRequests } from './challenges.mjs'
 
 const PLUGIN_BASE = `/plugins/${api.pluginURI() || 'spr-mitm-tester'}`
 const BRIDGE = 'mitmtst0'
@@ -71,7 +71,7 @@ export default function Plugin() {
   const sink = topology?.Sinks?.find((item) => item.Iface === BRIDGE)
   const ready = Boolean(status?.ready && sink?.Online)
   const challenges = summarizeChallenges(events).slice(0, 50)
-  const requests = events.filter((event) => event.result === 'request').reverse().slice(0, 20)
+  const requests = summarizeRequests(events).slice(0, 20)
   const dataEvents = events.filter((event) => event.result === 'websocket_message' || event.result === 'tcp_data')
     .reverse().slice(0, 20)
   const responses = new Map(events.filter((event) => event.result === 'upstream_response')
@@ -128,16 +128,17 @@ export default function Plugin() {
                 <Badge action={event.result === 'handshake_completed' ? 'success' : 'warning'} variant="outline">
                   <BadgeText>{eventLabel[event.result] || event.result}</BadgeText>
                 </Badge>
-                {event.upstreamError && <Text size="sm">Destination TLS failed: {event.upstreamError}</Text>}
+                {event.upstreamError && <Text size="sm">Destination connection failed: {event.upstreamError}</Text>}
+                {event.protocolError && <Text size="sm">Connection error: {event.protocolError}</Text>}
                 {event.result === 'handshake_completed' && event.requestCount === null &&
                   <Text size="sm">Older record · data not linked</Text>}
                 {event.result === 'handshake_completed' && event.requestCount !== null && (
                   <>
-                    {event.requestCount > 0 && <Text size="sm">Device sent {event.requestCount} HTTP request{event.requestCount === 1 ? '' : 's'}</Text>}
+                    {event.requestCount > 0 && <Text size="sm">Device started {event.requestCount} HTTP request{event.requestCount === 1 ? '' : 's'}{event.completedRequestCount < event.requestCount ? ' · incomplete' : ''}</Text>}
                     {event.clientDataBytes > 0 && <Text size="sm">Device sent {event.clientDataBytes} bytes over {event.protocol}</Text>}
                     {event.serverDataBytes > 0 && <Text size="sm">Server sent {event.serverDataBytes} bytes over {event.protocol}</Text>}
-                    {!event.upstreamError && event.requestCount === 0 && event.clientDataBytes === 0 && event.serverDataBytes === 0 &&
-                      <Text size="sm">No application data recorded</Text>}
+                    {!event.upstreamError && !event.protocolError && event.requestCount === 0 && event.clientDataBytes === 0 && event.serverDataBytes === 0 &&
+                      <Text size="sm">{event.closed ? 'Connection closed without a parsed request or data' : 'No application data recorded yet'}{event.upstreamTls ? ' · destination TLS completed' : ''}</Text>}
                   </>
                 )}
                 {event.responseCount > 0 && <Text size="sm">Destination replied · HTTP {event.lastStatus}</Text>}
@@ -147,9 +148,9 @@ export default function Plugin() {
         </VStack>
       </Card>
       <Card>
-        <SectionHeader title="HTTP requests captured" count={requests.length} />
+        <SectionHeader title="HTTP requests" count={requests.length} />
         <VStack space="md">
-          {requests.length === 0 && <Text>No HTTP requests captured yet.</Text>}
+          {requests.length === 0 && <Text>No HTTP request headers captured yet.</Text>}
           {requests.map((request) => (
             <VStack key={request.request_id} space="xs">
               <HStack space="sm" alignItems="center" justifyContent="space-between">
@@ -158,6 +159,8 @@ export default function Plugin() {
                     {request.method} {request.url}{request.url_truncated ? '…' : ''}
                   </Text>
                   <Text size="sm">{formatTime(request.time)} · {request.client_ip} · {request.sni}</Text>
+                  {request.result === 'request_headers' && <Text size="sm">Headers received · request not complete</Text>}
+                  {request.result === 'request_incomplete' && <Text size="sm">Request interrupted: {request.detail}</Text>}
                   {responses.has(request.request_id) && <Text size="sm">Destination replied · HTTP {responses.get(request.request_id)}</Text>}
                 </VStack>
                 <Button size="xs" variant="outline" onPress={() => setExpandedRequest(
@@ -174,13 +177,13 @@ export default function Plugin() {
                       {name}: {value}
                     </Text>
                   ))}
-                  <Text fontWeight="bold">Body · {request.body_bytes || 0} bytes{request.body_truncated ? ' (preview truncated)' : ''}</Text>
+                  {request.result !== 'request_headers' && <Text fontWeight="bold">Body · {request.body_bytes || 0} bytes{request.body_truncated ? ' (preview truncated)' : ''}</Text>}
                   {request.body_bytes > 0 && (
                     <Text size="sm" fontFamily="$mono" selectable sx={{ '@base': { whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' } }}>
                       {request.body_encoding === 'base64' ? 'Base64: ' : ''}{request.body_preview}
                     </Text>
                   )}
-                  {!request.body_bytes && <Text size="sm">No request body.</Text>}
+                  {request.result !== 'request_headers' && !request.body_bytes && <Text size="sm">No request body.</Text>}
                 </VStack>
               )}
             </VStack>
